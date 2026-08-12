@@ -2,4 +2,4 @@ Name       = Interfaces
 Version    = 1.0.0
 Essentials = 21.1
 LBDS       = 1.2.0
-Credits    = yobrantoro
+Credits    = SoySandi

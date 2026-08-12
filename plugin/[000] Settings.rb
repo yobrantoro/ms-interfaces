@@ -28,11 +28,20 @@ module Interfaces
 
   # Sube esto al tocar el MOTOR (este plugin). No hace falta subirlo al cambiar
   # un diseño, porque los diseños son datos y no se compilan.
+  VERSION = "v10"
+
+  # LA MARCA DE LA ESQUINA. APAGADA.
   #
-  # Se pinta en una esquina de la pantalla, pero SOLO con $DEBUG activo (lo pone
-  # preload.rb). Asi durante el desarrollo siempre se sabe si el juego recompilo,
-  # y en una release para jugadores no aparece ninguna marca encima del arte.
-  VERSION = "v8"
+  # Pintaba "INTERFACES v10  raton 0,9  lienzo 512x384" abajo a la derecha, y solo
+  # con $DEBUG puesto. Hizo su trabajo: sin ella no habia forma de saber si el
+  # juego habia recompilado (y se depuro dos veces a ciegas por no tenerla), y las
+  # coordenadas del raton descartaron en dos segundos que los clics se
+  # descuadraran al ampliar la pantalla.
+  #
+  # Ya no hace falta y estorba encima del diseño. Ponla a true el dia que algo
+  # "siga igual" despues de tocar el motor: es la forma mas rapida de saber si
+  # estas viendo el codigo nuevo o el viejo.
+  MARCA_VERSION = false
 
   #-----------------------------------------------------------------------------
   # Lienzo.

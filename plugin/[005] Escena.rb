@@ -341,7 +341,9 @@ module Interfaces
         # Despues de mover la seleccion, para que la flecha no vaya un fotograma
         # por detras del boton que señala.
         colocar_cursores
-        actualizar_marca if @depurando
+        # Solo se repinta cada fotograma si la marca esta puesta: lo unico que
+        # cambia ahi son las coordenadas del raton.
+        actualizar_marca if @depurando && Interfaces::MARCA_VERSION
 
         if Input.trigger?(Input::BACK)
           pbSEPlay(Interfaces::SE_CERRAR)
@@ -604,6 +606,9 @@ module Interfaces
     # coordenadas de la VENTANA y hay que dividir por la escala).
     def actualizar_marca
       return if !@depuracion
+      # Apagada por ajuste: estorba encima del diseño. Los AVISOS de arriba siguen
+      # saliendo, que esos si hacen falta mientras se diseña.
+      return if !Interfaces::MARCA_VERSION
       b = @depuracion.bitmap
       alto = 22
       # Se limpia una franja MAS ALTA de lo que ocupa el texto. Con el offset de
