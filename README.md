@@ -17,25 +17,21 @@ reiniciarlo: guardas aqui y vuelves a abrir la pantalla.
 
 ## Hacen falta las dos mitades
 
-Este mod es solo el **editor**. Lo que dibuja las pantallas dentro del juego es un
-plugin de Ruby que va en la carpeta `plugin/` de este repositorio.
+Este mod es el **editor**. Lo que dibuja las pantallas dentro del juego es un
+plugin de Ruby que vive en su propio repositorio:
+
+> ### [Interfaces — el plugin de Essentials](https://github.com/yobrantoro/essentials-interfaces)
+>
+> **Instalalo antes de empezar.** Sin el, este editor guarda ficheros JSON que
+> nada lee: podras diseñar, pero en el juego no aparecera nada.
 
 | | Donde va |
 |---|---|
 | **El editor** (este mod) | Se instala desde el Marketplace de Maker Studio |
-| **El motor** (`plugin/`) | Se copia a `Plugins/[LBDS] Interfaces/` de tu proyecto |
+| **El motor** ([plugin](https://github.com/yobrantoro/essentials-interfaces)) | Se copia a la carpeta `Plugins/` de tu proyecto |
 
-Sin el plugin, el editor guarda ficheros JSON que nada lee. Sin el editor, el
-plugin funciona igual pero hay que escribir los JSON a mano.
-
-### Instalar el motor
-
-1. Copia la carpeta `plugin/` a tu proyecto como `Plugins/[LBDS] Interfaces/`.
-2. Borra `Data/PluginScripts.rxdata` (o arranca el juego con Shift pulsado) para
-   que Essentials recompile los plugins.
-3. Abre el juego. En el menu de debug tendras **"Abrir una interfaz..."**.
-
-Probado en Essentials v21.1 sobre MKXP-Z.
+El editor comprueba al abrirse si el plugin esta en el proyecto, y avisa arriba si
+falta. Probado en Essentials v21.1 sobre MKXP-Z.
 
 ---
 

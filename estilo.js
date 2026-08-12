@@ -168,6 +168,27 @@ canvas.ui-lienzo-capa { position: absolute; left: 0; top: 0; pointer-events: non
   background: #e8574a; pointer-events: none;
 }
 
+/* ---- Aviso de que falta el plugin ----
+   Va arriba del todo y no se va solo: si el plugin falta, los diseños no se ven
+   en el juego, y eso no se puede decir con un toast que desaparece en tres
+   segundos. Lleva su boton de cerrar para quien ya lo sepa. */
+.ui-aviso-plugin {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; font-size: 12px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.ui-aviso-plugin.falta { background: #5c2a24; color: #ffd9d2; }
+.ui-aviso-plugin.aviso { background: #5c4a1e; color: #ffeec2; }
+.ui-aviso-enlace {
+  color: inherit; font-weight: 600; text-decoration: underline;
+  white-space: nowrap; flex-shrink: 0;
+}
+.ui-aviso-cerrar {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0 4px; opacity: .7; flex-shrink: 0;
+}
+.ui-aviso-cerrar:hover { opacity: 1; }
+
 /* ---- Cartel de "no hay nada" ---- */
 .ui-vacio {
   flex: 1; display: flex; flex-direction: column; align-items: center;

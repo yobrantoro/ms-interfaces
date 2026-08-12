@@ -71,14 +71,10 @@ jobs:
         run: |
           # Zip everything in the repo root EXCEPT git, CI, and dev-only files.
           # The Maker Studio installer expects `manifest.json` at the zip root.
-          # plugin/ NO entra: es la parte de Ruby que va dentro del juego, no
-          # dentro del editor. Si se colara serian 150 KB que el cargador de mods
-          # no puede usar para nada.
           zip -r "${{ steps.meta.outputs.asset-name }}" . \
             -x ".git/*" \
             -x ".github/*" \
             -x ".gitignore" \
-            -x "plugin/*" \
             -x "*.zip"
 
       - name: Compute SHA-256

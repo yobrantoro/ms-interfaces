@@ -21,6 +21,10 @@ import { Inspector } from "./components/inspector.js";
 import { Tiempo } from "./components/tiempo.js";
 
 const CARPETA = "UI";
+// El nombre TAL CUAL aparece en el campo Name del meta.txt del plugin. Si se
+// cambia alli, hay que cambiarlo aqui y en el "requires" del manifest.
+const PLUGIN_NECESARIO = "Interfaces";
+const URL_PLUGIN = "https://github.com/yobrantoro/essentials-interfaces";
 const TOPE_DESHACER = 60;
 // Cambios mas seguidos que esto se agrupan en una sola foto de deshacer.
 const VENTANA_DESHACER = 600;
@@ -148,7 +152,73 @@ export class EditorInterfaces {
   }
 
   //---------------------------------------------------------------------------
+  // ¿ESTA EL PLUGIN QUE HACE FALTA PARA QUE ESTO SIRVA DE ALGO?
+  //
+  // Este editor escribe UI/<nombre>.json. Quien los lee y los pinta es el plugin
+  // de Ruby "Interfaces", que va dentro del proyecto del juego. Sin el, se puede
+  // diseñar igual pero en el juego no aparece nada, y sin un aviso eso se
+  // descubre despues de montar una pantalla entera.
+  //
+  // CUIDADO CON EL FALSO POSITIVO: available() devuelve false en proyectos sin
+  // carpeta Plugins/ (v16, BES v5), y ahi isInstalled() dice "no instalado" para
+  // TODO. Si se avisara sin mirar eso, se estaria acusando en falso en proyectos
+  // donde ni siquiera se puede comprobar. Por eso hay tres casos y no dos.
+  comprobarPlugin() {
+    const P = this.ctx.plugins;
+    if (!P || typeof P.available !== "function") return;   // editor mas viejo
+    let disponible = false, instalado = false, info = null;
+    try {
+      disponible = P.available();
+      if (disponible) {
+        instalado = P.isInstalled(PLUGIN_NECESARIO);
+        info = P.get(PLUGIN_NECESARIO);
+      }
+    } catch { return; }
+
+    if (disponible && instalado) {
+      // Esta puesto. Se dice la version, que ayuda si algun dia hay incompatibles.
+      this.quitarAviso();
+      if (info && info.version) this.toast(`Plugin Interfaces ${info.version} detectado en el proyecto.`, "success");
+      return;
+    }
+    if (!disponible) {
+      // No se puede saber. Se dice lo que hay, sin acusar.
+      this.mostrarAviso(
+        "No puedo comprobar los plugins de este proyecto (no tiene carpeta Plugins/). " +
+        "Asegurate de que el plugin Interfaces esta instalado, o los diseños no se veran en el juego.",
+        "aviso");
+      return;
+    }
+    this.mostrarAviso(
+      "Falta el plugin Interfaces en este proyecto. El editor funciona y guarda los diseños, " +
+      "pero el juego no los va a pintar hasta que lo instales.",
+      "falta");
+  }
+
+  mostrarAviso(texto, clase) {
+    this.quitarAviso();
+    const enlace = h("a", {
+      href: URL_PLUGIN, target: "_blank", rel: "noreferrer",
+      className: "ui-aviso-enlace", textContent: "Descargar el plugin"
+    });
+    this.avisoPlugin = h("div", { className: "ui-aviso-plugin " + clase },
+      h("span", { textContent: texto }),
+      h("span", { className: "ui-barra-hueco" }),
+      enlace,
+      h("button", { className: "ui-aviso-cerrar", textContent: "×", title: "Ocultar",
+                    onClick: () => this.quitarAviso() })
+    );
+    this.raiz.insertBefore(this.avisoPlugin, this.raiz.firstChild);
+  }
+
+  quitarAviso() {
+    if (this.avisoPlugin && this.avisoPlugin.parentNode) this.avisoPlugin.remove();
+    this.avisoPlugin = null;
+  }
+
+  //---------------------------------------------------------------------------
   async arrancar() {
+    this.comprobarPlugin();
     await G.cargarFuente();
     if (!G.hayTauri()) {
       this.toast("No puedo leer las imagenes del proyecto: el editor se vera sin graficos.", "warning");
