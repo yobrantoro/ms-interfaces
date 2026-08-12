@@ -83,6 +83,17 @@ export class Capas {
 
     fila.appendChild(ojo);
     fila.appendChild(h("span", { className: "ui-capa-id", textContent: el.id, title: el.id }));
+    // Marcas de un vistazo: lo que se repite y lo que tiene condicion. Sin esto
+    // habria que ir elemento por elemento para saber por que algo no sale.
+    let marca = "";
+    if (el.repetir) marca += "x" + el.repetir + " ";
+    if (el.mostrar_si) marca += "?";
+    if (marca) {
+      fila.appendChild(h("span", { className: "ui-capa-tipo", style: { color: "var(--accent)" },
+        textContent: marca.trim(),
+        title: (el.repetir ? "Se repite en el grupo " + el.repetir + ". " : "") +
+               (el.mostrar_si ? "Se ve " + M.resumenCondicion(el.mostrar_si) : "") }));
+    }
     fila.appendChild(h("span", { className: "ui-capa-tipo", textContent: M.NOMBRE_TIPO[el.tipo] || el.tipo }));
     fila.appendChild(candado);
 

@@ -120,6 +120,8 @@ export class EditorInterfaces {
       interruptoresConocidos: () => this.interruptoresConocidos(),
       catalogo: () => this.catalogo || [],
       fondoPantallaCompleta: () => this.anadirFondo(),
+      marcos: () => this.marcos || [],
+      pedirTexto: (titulo, valor) => this.pedirTexto(titulo, valor),
       avisar: (m) => this.toast(m, "warning")
     });
 
@@ -223,6 +225,28 @@ export class EditorInterfaces {
     if (!G.hayTauri()) {
       this.toast("No puedo leer las imagenes del proyecto: el editor se vera sin graficos.", "warning");
     }
+    // LOS MARCOS, CLASIFICADOS POR SU FORMATO DE VERDAD.
+    //
+    // La carpeta Windowskins mezcla marcos de menu con bocadillos de dialogo y
+    // carteles de señal, y estos ultimos NO son marcos: dibujarlos como tal sale
+    // deforme. Se miden todos (solo la cabecera, es barato) y se ofrecen unicamente
+    // los que el editor sabe dibujar. Ofrecer los 108 fue un error que se vio en
+    // cuanto alguien eligio uno.
+    this.marcos = [];
+    try {
+      const ls = await G.listarGraficos(this.ctx, "Windowskins");
+      const nombres = (ls || []).map(n => String(n).replace(/.(png|gif)$/i, "")).sort();
+      const medidos = await Promise.all(nombres.map(async (n) => {
+        const m = await G.medirGrafico("Graphics/Windowskins/" + n);
+        return { nombre: n, formato: m ? M.formatoMarco(m.ancho, m.alto) : "ninguno" };
+      }));
+      this.marcos = medidos.filter(m => m.formato !== "ninguno");
+      const fuera = medidos.length - this.marcos.length;
+      if (fuera > 0) {
+        this.toast(`${this.marcos.length} marcos de ventana disponibles. Los otros ${fuera} de esa carpeta son bocadillos y carteles, no marcos.`, "info");
+      }
+    } catch { this.marcos = []; }
+
     await this.recargarLista();
     if (this.disponibles.length) await this.abrir(this.disponibles[0]);
     else this.cargarDiseno(M.disenoNuevo("sin_nombre"), null);

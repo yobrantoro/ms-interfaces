@@ -61,12 +61,15 @@ export class Inspector {
     this.pintarGenerales(el);
     this.pintarPosicion(el);
     this.pintarPorTipo(el);
+    this.pintarRepeticion(el);
+    this.pintarCondicion(el);
     this.pintarAspecto(el);
     this.pintarEntrada(el);
   }
 
   pintarSinSeleccion() {
     this.pintarPantalla();
+    this.pintarRepeticiones();
     this.pintarAperturas();
     this.cuerpo.appendChild(separador());
     this.cuerpo.appendChild(h("div", { className: "ui-ayuda" },
@@ -131,6 +134,73 @@ export class Inspector {
       }, "flechas y Z, ademas del raton")));
     this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
       textContent: "Con esto puesto, las flechas mueven la seleccion y Z pulsa. El raton sigue funcionando a la vez y al pasar por encima de un boton lo elige. Quitalo solo si quieres una pantalla que sea unicamente de raton." }));
+  }
+
+  //---------------------------------------------------------------------------
+  // GRUPOS QUE SE REPITEN.
+  //
+  // Se declaran en la pantalla y no en cada elemento a proposito: los cinco
+  // elementos de una ficha comparten la separacion, y asi se cambia en un sitio.
+  //---------------------------------------------------------------------------
+  pintarRepeticiones() {
+    if (!this.diseno) return;
+    this.cuerpo.appendChild(titulillo("Grupos que se repiten"));
+    const reps = this.diseno.repeticiones || {};
+    const nombres = Object.keys(reps);
+
+    if (!nombres.length) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Para una lista (los 6 del equipo, una lista de misiones) declara un grupo aqui, y luego marca los elementos que se repiten con el. Pones la ficha UNA vez y salen todas." }));
+    }
+
+    for (const nombre of nombres) {
+      const r = reps[nombre];
+      const tocar = () => { this.op.antesDeCambiar?.("rep:" + nombre); this.op.alCambiar?.(); };
+      this.cuerpo.appendChild(fila(nombre,
+        boton("Quitar", () => {
+          this.op.antesDeCambiar?.();
+          delete this.diseno.repeticiones[nombre];
+          // Los elementos que lo usaban se quedarian huerfanos.
+          for (const el of this.diseno.elementos || []) if (el.repetir === nombre) delete el.repetir;
+          if (!Object.keys(this.diseno.repeticiones).length) delete this.diseno.repeticiones;
+          this.op.alCambiar?.();
+          this.refrescar();
+        }, "peligro")));
+      this.cuerpo.appendChild(fila("Cuantas",
+        campoTexto(String(r.cuantos == null ? "" : r.cuantos),
+          (v) => { const n = parseInt(v, 10); r.cuantos = (String(v).includes("{") ? v : (isNaN(n) ? v : n)); tocar(); }, "6")));
+      this.cuerpo.appendChild(fila("Por fila",
+        campoNumero(M.num(r.por_fila, 0), (v) => { r.por_fila = Math.max(0, Math.round(v || 0)) || undefined; tocar(); this.refrescar(); }, { min: 0 }),
+        h("span", { className: "ui-capa-tipo", textContent: "0 = en linea" })
+      ));
+      this.cuerpo.appendChild(fila("Separacion",
+        campoNumero(M.num(r.salto_x, 0), (v) => { r.salto_x = Math.round(v || 0) || undefined; tocar(); }),
+        campoNumero(M.num(r.salto_y, 0), (v) => { r.salto_y = Math.round(v || 0) || undefined; tocar(); })
+      ));
+      if (M.num(r.por_fila, 0) > 0) {
+        this.cuerpo.appendChild(fila("Salto de fila",
+          campoNumero(M.num(r.salto_fila_x, 0), (v) => { r.salto_fila_x = Math.round(v || 0) || undefined; tocar(); }),
+          campoNumero(M.num(r.salto_fila_y, 0), (v) => { r.salto_fila_y = Math.round(v || 0) || undefined; tocar(); })
+        ));
+      }
+      this.cuerpo.appendChild(fila("Cascada",
+        campoNumero(M.num(r.retraso, 0), (v) => { r.retraso = (v || 0) || undefined; tocar(); }, { paso: 0.02, min: 0 }),
+        h("span", { className: "ui-capa-tipo", textContent: "s entre copias" })
+      ));
+      this.cuerpo.appendChild(separador());
+    }
+
+    this.cuerpo.appendChild(boton("Añadir un grupo...", async () => {
+      const n = await this.op.pedirTexto?.("Nombre del grupo (equipo, misiones...)", "equipo");
+      if (!n) return;
+      const limpio = String(n).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+      if (!limpio) return;
+      this.op.antesDeCambiar?.();
+      this.diseno.repeticiones = this.diseno.repeticiones || {};
+      this.diseno.repeticiones[limpio] = { cuantos: 6, salto_y: 40 };
+      this.op.alCambiar?.();
+      this.refrescar();
+    }));
   }
 
   //---------------------------------------------------------------------------
@@ -234,20 +304,105 @@ export class Inspector {
       campoNumero(M.num(el.x, 0), (v) => this.fijar(el, "x", Math.round(v || 0))),
       campoNumero(M.num(el.y, 0), (v) => this.fijar(el, "y", Math.round(v || 0)))
     ));
-    const conMedida = el.tipo === "panel" || el.tipo === "texto" || (el.tipo === "boton" && !el.imagen);
-    if (conMedida) {
-      this.cuerpo.appendChild(fila("Tamaño",
-        campoNumero(el.ancho == null ? null : M.num(el.ancho, 0), (v) => this.fijar(el, "ancho", v == null ? null : Math.round(v)), { hueco: "auto" }),
-        campoNumero(el.alto == null ? null : M.num(el.alto, 0), (v) => this.fijar(el, "alto", v == null ? null : Math.round(v)), { hueco: "auto" })
-      ));
-      if (el.tipo === "texto") {
-        this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
-          textContent: "Dejalo vacio y la caja se ajusta sola al texto." }));
-      }
-    } else {
+    this.cuerpo.appendChild(fila("Tamaño",
+      campoNumero(el.ancho == null ? null : M.num(el.ancho, 0), (v) => this.fijar(el, "ancho", v == null ? null : Math.round(v)), { hueco: "auto" }),
+      campoNumero(el.alto == null ? null : M.num(el.alto, 0), (v) => this.fijar(el, "alto", v == null ? null : Math.round(v)), { hueco: "auto" })
+    ));
+    // TIPOS QUE MIDEN LO QUE MIDE SU IMAGEN. Se les puede dar un tamaño igual: el
+    // motor lo traduce a zoom_x y zoom_y por separado, o sea que se puede
+    // deformar. Dejarlo vacio vuelve al tamaño de la imagen.
+    const porImagen = el.tipo === "imagen" || el.tipo === "animado" ||
+                      el.tipo === "pokemon" || (el.tipo === "boton" && el.imagen);
+    if (porImagen) {
+      this.cuerpo.appendChild(fila("",
+        boton("Tamaño original", () => {
+          this.op.antesDeCambiar?.();
+          delete el.ancho;
+          delete el.alto;
+          this.op.alCambiar?.();
+          this.refrescar();
+        })));
       this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
-        textContent: "El tamaño lo pone la imagen." }));
+        textContent: "Vacio = el tamaño de la imagen. Arrastra una esquina en el lienzo para estirarla; con Shift no se deforma." }));
+    } else if (el.tipo === "texto") {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Dejalo vacio y la caja se ajusta sola al texto." }));
     }
+  }
+
+  // A que grupo repetido pertenece este elemento.
+  pintarRepeticion(el) {
+    const declaradas = Object.keys((this.diseno && this.diseno.repeticiones) || {});
+    if (!declaradas.length && !el.repetir) return;
+    this.cuerpo.appendChild(titulillo("Se repite"));
+    this.cuerpo.appendChild(fila("En el grupo",
+      desplegable(el.repetir || "",
+        [{ valor: "", texto: "(no se repite)" }, ...declaradas.map(d => ({ valor: d, texto: d }))],
+        (v) => this.fijar(el, "repetir", v || null))));
+    if (el.repetir) {
+      const r = (this.diseno.repeticiones || {})[el.repetir] || {};
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: `Se dibujara ${r.cuantos || "?"} veces. Usa {n} en los textos para el numero de copia: {equipo.{n}.nombre} da el nombre del Pokemon 1, 2, 3...` }));
+    }
+  }
+
+  //---------------------------------------------------------------------------
+  // MOSTRAR SOLO SI...
+  //
+  // Es lo que convierte una lista repetida en algo util: pones seis fichas de
+  // equipo y las de los huecos vacios se esconden solas.
+  //---------------------------------------------------------------------------
+  pintarCondicion(el) {
+    this.cuerpo.appendChild(titulillo("Mostrar solo si"));
+    const tiene = !!el.mostrar_si;
+    this.cuerpo.appendChild(fila("Con condicion",
+      casilla(tiene, (v) => {
+        this.op.antesDeCambiar?.();
+        if (v) el.mostrar_si = { dato: "{interruptor.1}", es: 1 };
+        else delete el.mostrar_si;
+        this.op.alCambiar?.();
+        this.refrescar();
+      }, tiene ? "" : "se ve siempre")));
+    if (!tiene) return;
+
+    const cond = el.mostrar_si;
+    const tocar = () => { this.op.antesDeCambiar?.("cond:" + el.id); this.op.alCambiar?.(); };
+
+    const entrada = campoTexto(cond.dato, (v) => { cond.dato = v; tocar(); }, "{equipo.1.nombre}");
+    const btn = boton("Datos...", async () => {
+      const d = await this.elegirDato();
+      if (!d) return;
+      cond.dato = "{" + d + "}";
+      entrada.value = cond.dato;
+      tocar();
+      this.refrescar();
+    });
+    this.cuerpo.appendChild(fila("El dato", entrada, btn));
+
+    const comp = M.comparadorDe(cond) || "es";
+    this.cuerpo.appendChild(fila("Que", desplegable(comp, M.COMPARADORES, (v) => {
+      this.op.antesDeCambiar?.();
+      // Solo un comparador a la vez: se quitan los demas.
+      for (const c of M.COMPARADORES) delete cond[c.valor];
+      cond[v] = (v === "existe") ? true : "";
+      this.op.alCambiar?.();
+      this.refrescar();
+    })));
+
+    if (comp === "existe") {
+      this.cuerpo.appendChild(fila("Tiene que",
+        desplegable(cond.existe === false ? "no" : "si",
+          [{ valor: "si", texto: "existir" }, { valor: "no", texto: "NO existir" }],
+          (v) => { cond.existe = (v === "si"); tocar(); })));
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Con una lista repetida esto es lo mas util: pon {equipo.{n}.nombre} y las fichas de los huecos vacios desaparecen solas." }));
+    } else {
+      this.cuerpo.appendChild(fila("A", campoTexto(String(cond[comp] == null ? "" : cond[comp]),
+        (v) => { const n = parseFloat(v); cond[comp] = (v !== "" && !isNaN(n) && String(n) === v.trim()) ? n : v; tocar(); }, "1")));
+    }
+
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "En el juego: " + M.resumenCondicion(cond) + ". Un boton escondido tampoco se puede pulsar ni elegir con las flechas. Si la condicion esta mal escrita el elemento SE VE, para que no desaparezca en silencio." }));
   }
 
   pintarAspecto(el) {
@@ -261,9 +416,11 @@ export class Inspector {
       h("span", { className: "ui-capa-tipo", textContent: "1 = normal" })
     ));
     this.cuerpo.appendChild(fila("Giro",
-      campoNumero(M.num(el.angulo, 0), (v) => this.fijar(el, "angulo", v == null ? null : v)),
-      h("span", { className: "ui-capa-tipo", textContent: "grados" })
+      campoNumero(M.num(el.angulo, 0), (v) => this.fijar(el, "angulo", (v == null || v === 0) ? null : v), { paso: 5, min: -180, max: 180 }),
+      boton("Enderezar", () => this.fijar(el, "angulo", null))
     ));
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "Tambien se gira con la bolita de encima del elemento; con Shift va de 15 en 15 grados. El giro y el tamaño trabajan sobre el CENTRO." }));
     this.cuerpo.appendChild(fila("Se ve",
       casilla(el.visible !== false, (v) => this.fijar(el, "visible", v ? null : false), "en el juego")
     ));
@@ -306,6 +463,7 @@ export class Inspector {
       case "panel":   this.pintarPanel(el); break;
       case "animado": this.pintarAnimado(el); break;
       case "boton":   this.pintarBoton(el); break;
+      case "ventana": this.pintarVentana(el); break;
       case "barra":   this.pintarBarra(el); break;
       case "pokemon": this.pintarPokemon(el); break;
     }
@@ -341,6 +499,42 @@ export class Inspector {
       });
       return r ? String(r).trim().replace(/^\{|\}$/g, "") : null;
     } catch { return null; }
+  }
+
+  //---------------------------------------------------------------------------
+  pintarVentana(el) {
+    this.cuerpo.appendChild(titulillo("Ventana"));
+    const marcos = this.op.marcos?.() || [];
+    const deMenu = marcos.filter(m => m.formato === "3x3");
+    const clasicos = marcos.filter(m => m.formato === "clasico");
+    const opciones = [{ valor: "", texto: "El que elija el jugador" },
+                      ...deMenu.map(m => ({ valor: m.nombre, texto: m.nombre })),
+                      ...clasicos.map(m => ({ valor: m.nombre, texto: m.nombre + "  (clasico)" }))];
+    // Si el diseño trae un marco que ya no esta en la lista (se borro, o es de los
+    // que no valen), se añade para no perderlo en silencio al abrir el inspector.
+    if (el.marco && !marcos.some(m => m.nombre === el.marco)) {
+      opciones.push({ valor: el.marco, texto: el.marco + "  (no es un marco de ventana)" });
+    }
+    this.cuerpo.appendChild(fila("Marco",
+      desplegable(el.marco || "", opciones, (v) => this.fijar(el, "marco", v || null))));
+
+    if (!el.marco) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Sin marco elegido usa el del sistema, que es el que el jugador tenga puesto en Opciones. Es lo recomendable: asi tu pantalla cambia de marco con las del juego y no desentona. Aqui se dibuja el primero de la lista solo para hacerte una idea." }));
+    } else {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Marco fijo: esta pantalla lo llevara siempre, aunque el jugador elija otro en Opciones." }));
+    }
+    const elegido = marcos.find(m => m.nombre === el.marco);
+    if (el.marco && !elegido) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        style: { color: "#ffb4a8" },
+        textContent: "Ese fichero NO es un marco de ventana: en la carpeta Windowskins hay tambien bocadillos de dialogo y carteles de señal, que tienen otra distribucion por dentro y se veran deformes. Elige uno de la lista." }));
+    }
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: `En la lista solo salen los que son marcos de verdad: ${deMenu.length} de menu (los "choice", los mismos que puede elegir el jugador) y ${clasicos.length} del formato clasico de RPG Maker.` }));
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "El marco va DETRAS de lo que lleve dentro: dejale la capa mas baja que los textos y botones que pongas encima. Y no se puede girar (una ventana de RPG Maker no gira)." }));
   }
 
   //---------------------------------------------------------------------------

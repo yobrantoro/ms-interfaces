@@ -206,6 +206,26 @@ export async function bytesDeImagen(rutaRelativa) {
 }
 
 //-----------------------------------------------------------------------------
+// Las medidas de una imagen SIN decodificarla entera.
+//
+// Hace falta para clasificar los 108 marcos de la carpeta Windowskins al abrir el
+// editor. Cargarlos todos de verdad seria absurdo; get_image_dimensions lee solo
+// la cabecera.
+//-----------------------------------------------------------------------------
+export async function medirGrafico(rutaRelativa) {
+  if (!_invoke || !_raiz) return null;
+  for (const ext of EXTENSIONES) {
+    try {
+      const wh = await _invoke("get_image_dimensions", { path: `${_raiz}/${rutaRelativa}.${ext}` });
+      if (Array.isArray(wh) && wh.length >= 2) return { ancho: wh[0], alto: wh[1] };
+    } catch { /* se prueba la otra extension */ }
+  }
+  // Si el editor no expone esa orden, se cae a cargar la imagen y mirarla.
+  const dato = await cargarImagen(rutaRelativa);
+  return dato ? { ancho: dato.ancho, alto: dato.alto } : null;
+}
+
+//-----------------------------------------------------------------------------
 // La fuente del juego.
 //-----------------------------------------------------------------------------
 export async function cargarFuente() {

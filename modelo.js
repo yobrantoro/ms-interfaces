@@ -26,7 +26,31 @@ export const BOTON_COLOR = "#3C6E9BFF";
 export const BOTON_COLOR_ENCIMA = "#5A96C8FF";
 export const BOTON_COLOR_PULSADO = "#28506FFF";
 
-export const TIPOS = ["imagen", "texto", "boton", "panel", "animado", "barra", "pokemon"];
+export const TIPOS = ["ventana", "imagen", "texto", "boton", "panel", "animado", "barra", "pokemon"];
+
+// El marco por defecto es el del SISTEMA, o sea el que el jugador tenga elegido en
+// Opciones. El editor no puede saber cual es, asi que enseña el primero de la
+// lista de Essentials (MENU_WINDOWSKINS[0]) para hacerse una idea.
+export const MARCO_DEFECTO = "choice 1";
+
+// QUE FORMATO TIENE UN MARCO, POR SU TAMAÑO.
+//
+// La carpeta Windowskins mezcla tres cosas muy distintas, y solo dos son marcos
+// de ventana. Se clasifica igual que el motor (mirar __setWindowskin en los
+// scripts del juego), que decide por las medidas y nada mas:
+//
+//   3x3     cuadrado y divisible entre 3 -> nueve piezas. Son los "choice N",
+//           los 28 que Essentials declara como marcos de menu.
+//   clasico 192x128 o 128x128 -> windowskin de RPG Maker XP o VX. Otra
+//           distribucion completamente: el fondo va aparte del borde.
+//   ninguno todo lo demas: bocadillos de dialogo y carteles de señal. NO son
+//           marcos de ventana y dibujarlos como tal sale deforme.
+export function formatoMarco(ancho, alto) {
+  if (!ancho || !alto) return "ninguno";
+  if (ancho === alto && ancho % 3 === 0) return "3x3";
+  if ((ancho === 192 && alto === 128) || (ancho === 128 && alto === 128)) return "clasico";
+  return "ninguno";
+}
 export const ALINEACIONES = ["izquierda", "centro", "derecha"];
 export const VERTICALES = ["arriba", "centro", "abajo"];
 
@@ -84,10 +108,40 @@ export const ACCIONES = [
 // es un z-index ni un easing para cuadrar una pantalla.
 export const NOMBRE_TIPO = {
   imagen: "Imagen", texto: "Texto", boton: "Boton", panel: "Rectangulo", animado: "Animacion",
-  barra: "Barra", pokemon: "Pokemon"
+  barra: "Barra", pokemon: "Pokemon", ventana: "Ventana"
 };
 
 export const MODOS_POKEMON = ["icono", "frente", "espalda"];
+
+// Comparadores de las condiciones. Espejo de Datos::COMPARADORES en Ruby.
+export const COMPARADORES = [
+  { valor: "es",            texto: "es igual a" },
+  { valor: "no_es",         texto: "no es igual a" },
+  { valor: "mayor_que",     texto: "es mayor que" },
+  { valor: "menor_que",     texto: "es menor que" },
+  { valor: "mayor_o_igual", texto: "es mayor o igual que" },
+  { valor: "menor_o_igual", texto: "es menor o igual que" },
+  { valor: "contiene",      texto: "contiene el texto" },
+  { valor: "existe",        texto: "existe (no esta vacio)" }
+];
+
+// Que comparador usa una condicion, o null si ninguno.
+export function comparadorDe(cond) {
+  if (!cond || typeof cond !== "object") return null;
+  for (const c of COMPARADORES) if (c.valor in cond) return c.valor;
+  return null;
+}
+
+// Como se lee una condicion en cristiano, para la lista de capas y el inspector.
+export function resumenCondicion(cond) {
+  if (!cond) return "";
+  const c = comparadorDe(cond);
+  if (!c) return "condicion sin terminar";
+  const dato = String(cond.dato || "?").replace(/^{|}$/g, "");
+  if (c === "existe") return cond.existe ? `si ${dato} existe` : `si ${dato} NO existe`;
+  const texto = (COMPARADORES.find(x => x.valor === c) || {}).texto || c;
+  return `si ${dato} ${texto} ${cond[c]}`;
+}
 
 export const NOMBRE_PROPIEDAD = {
   x: "Posicion X", y: "Posicion Y", opacidad: "Transparencia", zoom: "Tamaño", angulo: "Giro"
@@ -239,6 +293,123 @@ export function duracionDiseno(diseno) {
 }
 
 //=============================================================================
+// GEOMETRIA: donde esta un elemento y si un punto cae dentro.
+//
+// ESPEJO DE Elemento#actualizar Y Boton#contiene? EN RUBY. Vive aqui y no en el
+// lienzo por dos motivos: el lienzo necesita el DOM y no se puede probar sin
+// navegador, y estas cuentas son EXACTAMENTE las que tienen que coincidir con el
+// motor. Si se separan, el editor enseña un boton en un sitio y el juego lo deja
+// pulsable en otro, que es el peor fallo posible en una herramienta asi.
+//
+// LA REGLA: la x,y del diseño es la esquina de arriba a la izquierda, pero el
+// GIRO y el ZOOM trabajan sobre el CENTRO. Girar desde una esquina manda al
+// elemento describiendo un arco, y crecer desde una esquina lo empuja hacia
+// abajo y a la derecha en vez de hincharlo en su sitio.
+//=============================================================================
+
+// La caja que ocupa algo de w x h puesto en x,y con ese zoom.
+export function cajaConZoom(x, y, w, h, zoom) {
+  const z = zoom == null ? 1 : zoom;
+  return { x: x + (w - w * z) / 2, y: y + (h - h * z) / 2, w: w * z, h: h * z };
+}
+
+// De un punto de la caja SIN girar a donde se ve de verdad. RGSS gira en sentido
+// antihorario, que con la y hacia abajo es la matriz [[cos, sen], [-sen, cos]].
+export function girarPunto(caja, ang, px, py) {
+  if (!ang) return { x: px, y: py };
+  const a = ang * Math.PI / 180;
+  const cx = caja.x + caja.w / 2, cy = caja.y + caja.h / 2;
+  const dx = px - cx, dy = py - cy;
+  return { x: cx + (dx * Math.cos(a)) + (dy * Math.sin(a)),
+           y: cy - (dx * Math.sin(a)) + (dy * Math.cos(a)) };
+}
+
+// Y la vuelta, que es su inversa. ESTA es la que hace Boton#contiene? en Ruby
+// para saber si el raton cayo sobre un boton girado.
+export function desgirarPunto(caja, ang, px, py) {
+  if (!ang) return { x: px, y: py };
+  const a = ang * Math.PI / 180;
+  const cx = caja.x + caja.w / 2, cy = caja.y + caja.h / 2;
+  const dx = px - cx, dy = py - cy;
+  return { x: cx + (dx * Math.cos(a)) - (dy * Math.sin(a)),
+           y: cy + (dx * Math.sin(a)) + (dy * Math.cos(a)) };
+}
+
+export function dentroDeCaja(caja, ang, px, py) {
+  const p = desgirarPunto(caja, ang, px, py);
+  return p.x >= caja.x && p.x <= caja.x + caja.w &&
+         p.y >= caja.y && p.y <= caja.y + caja.h;
+}
+
+//=============================================================================
+// REPETICIONES. Espejo del modulo Repeticiones de [002] Lector.rb.
+//
+// El editor EDITA la lista de origen (un elemento por grupo) pero DIBUJA la lista
+// expandida, que es lo que se vera en el juego. Si solo dibujara el origen,
+// estarias colocando una ficha a ciegas sin ver si las seis caben.
+//
+// Cada copia lleva _origen con el id del elemento del que salio, para que al
+// pulsar la tercera copia se seleccione el elemento de verdad y no una copia que
+// no existe en el fichero.
+//=============================================================================
+export const TOPE_REPETICIONES = 60;
+
+export function expandirRepeticiones(diseno, valorDeDato) {
+  const declaradas = diseno && diseno.repeticiones;
+  const elementos = (diseno && diseno.elementos) || [];
+  if (!declaradas || typeof declaradas !== "object" || !Object.keys(declaradas).length) {
+    return elementos.map(el => ({ ...el, _origen: el.id }));
+  }
+
+  const salida = [];
+  for (const el of elementos) {
+    const nombre = el.repetir;
+    const regla = nombre ? declaradas[nombre] : null;
+    if (!regla || typeof regla !== "object") {
+      salida.push({ ...el, _origen: el.id });
+      continue;
+    }
+    let n = typeof regla.cuantos === "string"
+      ? parseInt(valorDeDato ? valorDeDato(regla.cuantos) : "0", 10) || 0
+      : num(regla.cuantos, 0);
+    if (n > TOPE_REPETICIONES) n = TOPE_REPETICIONES;
+    if (n <= 0) continue;
+
+    const dx = num(regla.salto_x, 0), dy = num(regla.salto_y, 0);
+    const porFila = num(regla.por_fila, 0);
+    const saltoFilaY = regla.salto_fila_y == null ? dy : num(regla.salto_fila_y, 0);
+    const saltoFilaX = num(regla.salto_fila_x, 0);
+    const retraso = num(regla.retraso, 0);
+
+    for (let i = 1; i <= n; i++) {
+      const col = porFila > 0 ? (i - 1) % porFila : (i - 1);
+      const fila = porFila > 0 ? Math.floor((i - 1) / porFila) : 0;
+      const copia = sustituirN({ ...JSON.parse(JSON.stringify(el)) }, i);
+      copia.id = el.id + "_" + i;
+      copia._origen = el.id;
+      copia.x = num(el.x, 0) + dx * col + saltoFilaX * fila;
+      copia.y = num(el.y, 0) + (porFila > 0 ? 0 : dy * col) + saltoFilaY * fila;
+      delete copia.repetir;
+      if (retraso > 0 && copia.entrada) {
+        copia.entrada.retraso = num(copia.entrada.retraso, 0) + retraso * (i - 1);
+      }
+      salida.push(copia);
+    }
+  }
+  return salida;
+}
+
+function sustituirN(o, i) {
+  if (typeof o === "string") return o.split("{n}").join(String(i));
+  if (Array.isArray(o)) return o.map(v => sustituirN(v, i));
+  if (o && typeof o === "object") {
+    for (const k of Object.keys(o)) o[k] = sustituirN(o[k], i);
+    return o;
+  }
+  return o;
+}
+
+//=============================================================================
 // Crear elementos nuevos con valores que ya se vean sin tocar nada.
 //=============================================================================
 export function elementoNuevo(tipo, id, x, y) {
@@ -270,6 +441,10 @@ export function elementoNuevo(tipo, id, x, y) {
     case "animado":
       el.imagen = "";
       el.fotogramas = 1; el.velocidad = 2; el.bucle = true;
+      break;
+    case "ventana":
+      el.ancho = 200; el.alto = 120;
+      el.capa = 0;                      // el marco va detras de lo que lleve dentro
       break;
     case "barra":
       el.ancho = 96; el.alto = 8;
@@ -394,9 +569,10 @@ export function idLibre(diseno, base) {
 // editarla, y los diffs de git enseñan lo que cambio de verdad y no un baile de
 // lineas.
 //=============================================================================
-const ORDEN = ["id", "tipo", "capa", "x", "y", "ancho", "alto",
+const ORDEN = ["id", "tipo", "repetir", "capa", "x", "y", "ancho", "alto",
   "imagen", "imagen_encima", "imagen_pulsado",
   "fotogramas", "ancho_fotograma", "alto_fotograma", "velocidad", "bucle",
+  "marco",
   "valor", "maximo", "por_tramos", "color_fondo", "color_medio", "color_bajo", "hacia",
   "cual", "modo",
   "texto", "tamano", "color", "sombra", "color_texto",
@@ -404,6 +580,7 @@ const ORDEN = ["id", "tipo", "capa", "x", "y", "ancho", "alto",
   "alineacion", "alineacion_vertical", "desplazar_y", "contorno",
   "opacidad", "zoom", "angulo", "visible", "sonido",
   "escala_encima", "escala_pulsado",
+  "mostrar_si",
   "orden_teclado", "sigue_seleccion", "cursor_x", "cursor_y",
   "accion", "entrada", "animaciones"];
 
@@ -425,6 +602,9 @@ export function escribirJSON(diseno) {
   // Solo se escribe si esta APAGADO: va puesto por defecto, y un "teclado: true"
   // en cada fichero seria ruido.
   if (diseno.teclado === false) salida.teclado = false;
+  if (diseno.repeticiones && Object.keys(diseno.repeticiones).length) {
+    salida.repeticiones = diseno.repeticiones;
+  }
   if (diseno.pantalla_completa) {
     salida.pantalla_completa = true;
     if (diseno.color_fondo) salida.color_fondo = diseno.color_fondo;
@@ -517,6 +697,13 @@ export function revisar(diseno, otros = []) {
       if (el.accion && el.accion.tipo === "abrir_interfaz" && !el.accion.interfaz) avisos.push(`"${donde}" abre otra interfaz pero no dice cual`);
       if (el.accion && (el.accion.tipo === "interruptor" || el.accion.tipo === "variable") && !(num(el.accion.numero, 0) > 0)) {
         avisos.push(`"${donde}" necesita un numero mayor que 0`);
+      }
+    }
+    if (el.mostrar_si) {
+      if (typeof el.mostrar_si !== "object") avisos.push(`La condicion de "${donde}" tiene que ser un objeto`);
+      else {
+        if (!el.mostrar_si.dato) avisos.push(`"${donde}" tiene una condicion que no dice que dato mira`);
+        if (!comparadorDe(el.mostrar_si)) avisos.push(`"${donde}" tiene una condicion sin comparacion`);
       }
     }
     for (const p of el.animaciones || []) {

@@ -5,8 +5,11 @@
 //   Esto vuelve a pintar en un canvas lo que el motor pinta con sprites de RGSS.
 //   Dos detalles que hay que respetar o el editor miente:
 //
-//   1. En RGSS el zoom y el giro se aplican desde la ESQUINA SUPERIOR IZQUIERDA
-//      del sprite (ox y oy valen 0), no desde el centro. Aqui igual.
+//   1. El zoom y el giro se aplican desde el CENTRO del elemento. RGSS por si
+//      solo lo hace desde la esquina, pero el motor pone el origen en el centro
+//      a proposito (ver Elemento#actualizar en [003] Elementos.rb): girar desde
+//      una esquina manda el elemento describiendo un arco, y no es lo que espera
+//      nadie que haya usado un editor de imagenes.
 //   2. El angulo de RGSS va en grados y en sentido ANTIHORARIO; el rotate del
 //      canvas es horario. Por eso se pasa negado.
 //
@@ -23,6 +26,9 @@ import * as D from "../datos.js";
 
 const TIRADOR = 7;                 // lado del tirador de redimension, en pixeles de pantalla
 const MINIMO = 2;                  // no se puede hacer un elemento mas pequeño que esto
+const GIRO_DIST = 22;              // cuanto se separa la bolita de girar del borde de arriba
+const GIRO_RADIO = 5;
+const GIRO_PASO = 15;              // con Shift, el giro va a saltos de estos grados
 
 // Los ocho tiradores, con el factor que aplican a x, y, ancho y alto.
 const TIRADORES = [
@@ -36,8 +42,12 @@ const TIRADORES = [
   { id: "o",  cx: 0,   cy: 0.5, dx: 1, dy: 0, dw: -1, dh: 0 }
 ];
 
-const CURSORES = { no: "nwse-resize", n: "ns-resize", ne: "nesw-resize", e: "ew-resize",
-                   se: "nwse-resize", s: "ns-resize", so: "nesw-resize", o: "ew-resize" };
+// Hacia donde apunta cada tirador, en grados. Sirve para elegir el cursor: en un
+// elemento girado, el tirador de la derecha ya no estira a lo ancho de la
+// pantalla, y un cursor que apunte mal despista mas que ayuda.
+const ANGULO_TIRADOR = { e: 0, se: 45, s: 90, so: 135, o: 180, no: 225, n: 270, ne: 315 };
+const CURSORES_POR_ANGULO = ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize",
+                             "ew-resize", "nwse-resize", "ns-resize", "nesw-resize"];
 
 export class Lienzo {
   constructor(opciones) {
@@ -134,7 +144,10 @@ export class Lienzo {
       }
     }
 
-    const ordenados = (this.diseno.elementos || [])
+    // Se dibuja la lista EXPANDIDA: un grupo repetido se ve con sus seis copias,
+    // igual que en el juego. Lo que se edita sigue siendo el elemento de origen.
+    this.expandidos = M.expandirRepeticiones(this.diseno, (clave) => D.rellenarEjemplo(clave));
+    const ordenados = this.expandidos
       .map((el, i) => ({ el, i }))
       .sort((a, b) => (M.num(a.el.capa, 0) - M.num(b.el.capa, 0)) || (a.i - b.i));
 
@@ -209,50 +222,53 @@ export class Lienzo {
     if (el.sigue_seleccion) {
       const destino = this.primerBoton();
       if (destino) {
-        const m = this.medidaElemento(el);
+        const mc = this.medidaElemento(el);
         const mb = this.medidaElemento(destino);
         x = M.num(destino.x, 0) + M.num(el.cursor_x, 0);
-        y = M.num(destino.y, 0) + Math.floor((mb.h - m.h) / 2) + M.num(el.cursor_y, 0);
+        y = M.num(destino.y, 0) + Math.floor((mb.h - mc.h) / 2) + M.num(el.cursor_y, 0);
       }
     }
     const op = M.valorDe(el, "opacidad", this.tiempo);
     const zoom = M.valorDe(el, "zoom", this.tiempo);
     const ang = M.valorDe(el, "angulo", this.tiempo);
+    // La caja que ocupa: la que pida el diseño, o la de su imagen si no pide
+    // ninguna. Todo lo de dentro se dibuja de 0,0 a m.w,m.h.
+    const m = this.medidaElemento(el);
 
     c.save();
     c.globalAlpha = Math.max(0, Math.min(255, op)) / 255;
-    c.translate(x, y);
+    // El eje va al CENTRO, se gira y se escala, y luego se vuelve a la esquina
+    // para dibujar. Es lo mismo que hace el motor poniendo ox y oy en el centro.
+    c.translate(x + m.w / 2, y + m.h / 2);
     if (ang) c.rotate(-ang * Math.PI / 180);      // RGSS gira al contrario
     if (zoom !== 1) c.scale(zoom, zoom);
+    c.translate(-m.w / 2, -m.h / 2);
 
     switch (el.tipo) {
-      case "panel":   this.pintarPanel(c, el); break;
-      case "texto":   this.pintarTexto(c, el); break;
-      case "boton":   this.pintarBoton(c, el); break;
-      case "imagen":  this.pintarImagen(c, el, el.imagen); break;
-      case "animado": this.pintarAnimado(c, el); break;
-      case "barra":   this.pintarBarra(c, el); break;
-      case "pokemon": this.pintarPokemon(c, el); break;
+      case "panel":   this.pintarPanel(c, el, m); break;
+      case "texto":   this.pintarTexto(c, el, m); break;
+      case "boton":   this.pintarBoton(c, el, m); break;
+      case "imagen":  this.pintarImagen(c, el, el.imagen, m); break;
+      case "animado": this.pintarAnimado(c, el, m); break;
+      case "ventana": this.pintarVentana(c, el, m); break;
+      case "barra":   this.pintarBarra(c, el, m); break;
+      case "pokemon": this.pintarPokemon(c, el, m); break;
     }
     c.restore();
   }
 
-  pintarPanel(c, el) {
-    const w = Math.max(M.num(el.ancho, 1), 1);
-    const hh = Math.max(M.num(el.alto, 1), 1);
-    this.recuadro(c, 0, 0, w, hh, colorCss(el.color, "#000000FF"),
+  pintarPanel(c, el, m) {
+    this.recuadro(c, 0, 0, m.w, m.h, colorCss(el.color, "#000000FF"),
       el.borde ? colorCss(el.borde, "#FFFFFFFF") : null,
       el.borde_grosor == null ? 1 : M.num(el.borde_grosor, 1));
   }
 
-  pintarTexto(c, el) {
+  pintarTexto(c, el, m) {
     // Se enseña el VALOR DE EJEMPLO, no las llaves: asi se ve el hueco que va a
     // ocupar de verdad en el juego y se puede cuadrar.
     const txt = D.rellenarEjemplo(el.texto);
     const tam = M.num(el.tamano, M.TEXTO_TAMANO);
-    const medida = this.medirTexto(c, txt, tam);
-    const w = M.num(el.ancho, 0) > 0 ? M.num(el.ancho, 0) : Math.ceil(medida.ancho) + 4;
-    const hh = M.num(el.alto, 0) > 0 ? M.num(el.alto, 0) : Math.max(medida.alto, tam + 4);
+    const w = m.w, hh = m.h;
     this.escribir(c, txt, 0, 0, w, hh, tam, {
       alineacion: el.alineacion,
       vertical: el.alineacion_vertical,
@@ -340,12 +356,11 @@ export class Lienzo {
     c.fillRect(x + ancho - g, y, g, alto);
   }
 
-  pintarBoton(c, el) {
+  pintarBoton(c, el, m) {
     const conImagen = !!el.imagen;
-    if (conImagen) { this.pintarImagen(c, el, el.imagen); return; }
+    if (conImagen) { this.pintarImagen(c, el, el.imagen, m); return; }
 
-    const w = Math.max(M.num(el.ancho, 1), 1);
-    const hh = Math.max(M.num(el.alto, 1), 1);
+    const w = m.w, hh = m.h;
     this.recuadro(c, 0, 0, w, hh, colorCss(el.color, M.BOTON_COLOR),
       el.borde ? colorCss(el.borde, "#FFFFFFFF") : null,
       el.borde_grosor == null ? 1 : M.num(el.borde_grosor, 1));
@@ -363,15 +378,18 @@ export class Lienzo {
     });
   }
 
-  pintarImagen(c, el, ruta) {
+  // Se dibuja al tamaño de la CAJA, no al de la imagen: si el diseño pide un
+  // ancho y un alto, la imagen se estira hasta ahi. En el juego eso lo hacen
+  // zoom_x y zoom_y por separado (ver Elemento#estirado), que es lo mismo.
+  pintarImagen(c, el, ruta, m) {
     const dato = this.pedirImagen(ruta);
-    if (!dato) { this.pintarHueco(c, el, ruta ? "?" : ""); return; }
-    c.drawImage(dato.img, 0, 0);
+    if (!dato) { this.pintarHueco(c, el, ruta ? "?" : "", m); return; }
+    c.drawImage(dato.img, 0, 0, m.w, m.h);
   }
 
-  pintarAnimado(c, el) {
+  pintarAnimado(c, el, m) {
     const dato = this.pedirImagen(el.imagen);
-    if (!dato) { this.pintarHueco(c, el, "?"); return; }
+    if (!dato) { this.pintarHueco(c, el, "?", m); return; }
     const n = Math.max(M.num(el.fotogramas, 1), 1);
     const fw = M.num(el.ancho_fotograma, 0) > 0 ? M.num(el.ancho_fotograma, 0) : Math.floor(dato.ancho / n);
     const fh = M.num(el.alto_fotograma, 0) > 0 ? M.num(el.alto_fotograma, 0) : dato.alto;
@@ -383,14 +401,86 @@ export class Lienzo {
     const cual = Math.floor(this.tiempo * porSeg) % n;
     const sx = (cual % porFila) * fw;
     const sy = Math.floor(cual / porFila) * fh;
-    c.drawImage(dato.img, sx, sy, fw, fh, 0, 0, fw, fh);
+    c.drawImage(dato.img, sx, sy, fw, fh, 0, 0, m.w, m.h);
+  }
+
+  // EL MARCO DE NUEVE TROZOS.
+  //
+  // Un windowskin de menu es de 48x48: nueve piezas de 16x16. Las esquinas van a
+  // tamaño fijo, los bordes se estiran a lo largo y el centro rellena. Es lo mismo
+  // que hace RGSS por dentro, y hay que hacerlo aqui tambien o el editor
+  // enseñaria un rectangulo donde el juego pinta un marco.
+  pintarVentana(c, el, m) {
+    const w = m.w, hh = m.h;
+    const nombre = el.marco || M.MARCO_DEFECTO;
+    const dato = this.pedirImagen("Graphics/Windowskins/" + nombre);
+
+    const formato = dato ? M.formatoMarco(dato.ancho, dato.alto) : "ninguno";
+    if (dato && dato.img && formato === "clasico") { this.marcoClasico(c, dato, w, hh); return; }
+    if (!dato || !dato.img || formato !== "3x3") {
+      // Sin el marco cargado (o con un formato que no es 3x3), se dibuja un hueco
+      // para poder colocarlo igual, en vez de no pintar nada.
+      c.save();
+      c.fillStyle = "rgba(20,28,42,0.85)";
+      c.fillRect(0, 0, w, hh);
+      c.strokeStyle = "rgba(140,190,255,0.85)";
+      c.setLineDash([4, 3]);
+      c.strokeRect(0.5, 0.5, w - 1, hh - 1);
+      c.restore();
+      return;
+    }
+
+    const p = dato.ancho / 3;                    // lado de cada pieza
+    const q = Math.min(p, Math.floor(w / 2), Math.floor(hh / 2));
+    const img = dato.img;
+    const trozo = (sx, sy, sw, sh, dx, dy, dw, dh) => {
+      if (dw <= 0 || dh <= 0) return;
+      c.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    };
+    const centroW = w - q * 2, centroH = hh - q * 2;
+
+    trozo(p, p, p, p, q, q, centroW, centroH);               // fondo
+    trozo(p, 0, p, p, q, 0, centroW, q);                     // arriba
+    trozo(p, p * 2, p, p, q, hh - q, centroW, q);            // abajo
+    trozo(0, p, p, p, 0, q, q, centroH);                     // izquierda
+    trozo(p * 2, p, p, p, w - q, q, q, centroH);             // derecha
+    trozo(0, 0, p, p, 0, 0, q, q);                           // esquinas
+    trozo(p * 2, 0, p, p, w - q, 0, q, q);
+    trozo(0, p * 2, p, p, 0, hh - q, q, q);
+    trozo(p * 2, p * 2, p, p, w - q, hh - q, q, q);
+  }
+
+  // EL WINDOWSKIN CLASICO DE RPG MAKER (192x128 o 128x128).
+  //
+  // No es un 3x3: el fondo y el borde estan en sitios distintos de la imagen.
+  //   (0,0,128,128)    el fondo, que se estira para rellenar
+  //   (128,0,64,64)    el borde, en nueve piezas de 16 y 32
+  // Dibujarlo con la cuenta del 3x3 daba una mancha deforme, que es justo lo que
+  // se veia.
+  marcoClasico(c, dato, w, hh) {
+    const img = dato.img;
+    const t = (sx, sy, sw, sh, dx, dy, dw, dh) => {
+      if (dw <= 0 || dh <= 0) return;
+      c.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    };
+    const q = Math.min(16, Math.floor(w / 2), Math.floor(hh / 2));
+    // Fondo estirado, dejando el borde fuera.
+    t(0, 0, 128, 128, q / 2, q / 2, Math.max(w - q, 0), Math.max(hh - q, 0));
+    const cw = w - q * 2, ch = hh - q * 2;
+    t(144, 0, 32, 16, q, 0, cw, q);              // arriba
+    t(144, 48, 32, 16, q, hh - q, cw, q);        // abajo
+    t(128, 16, 16, 32, 0, q, q, ch);             // izquierda
+    t(176, 16, 16, 32, w - q, q, q, ch);         // derecha
+    t(128, 0, 16, 16, 0, 0, q, q);               // esquinas
+    t(176, 0, 16, 16, w - q, 0, q, q);
+    t(128, 48, 16, 16, 0, hh - q, q, q);
+    t(176, 48, 16, 16, w - q, hh - q, q, q);
   }
 
   // Barra: se enseña a la mitad, que es lo util para cuadrar (llena o vacia no
   // deja ver donde queda el borde de relleno).
-  pintarBarra(c, el) {
-    const w = Math.max(M.num(el.ancho, 1), 1);
-    const hh = Math.max(M.num(el.alto, 1), 1);
+  pintarBarra(c, el, m) {
+    const w = m.w, hh = m.h;
     const g = el.borde_grosor == null ? 1 : M.num(el.borde_grosor, 1);
     this.recuadro(c, 0, 0, w, hh, colorCss(el.color_fondo, "#20242BFF"),
       el.borde ? colorCss(el.borde, "#FFFFFFFF") : null, g);
@@ -406,26 +496,24 @@ export class Lienzo {
 
   // Pokemon: en el editor no hay partida, asi que se dibuja un hueco con su
   // medida real de icono para poder colocarlo.
-  pintarPokemon(c, el) {
-    const lado = (el.modo === "frente" || el.modo === "espalda") ? 128 : 64;
+  pintarPokemon(c, el, m) {
     c.save();
     c.strokeStyle = "rgba(120,200,255,0.9)";
     c.setLineDash([3, 2]);
-    c.strokeRect(0.5, 0.5, lado - 1, lado - 1);
+    c.strokeRect(0.5, 0.5, m.w - 1, m.h - 1);
     c.setLineDash([]);
     c.fillStyle = "rgba(120,200,255,0.9)";
     c.font = "9px sans-serif";
     c.textAlign = "center";
     c.textBaseline = "middle";
-    c.fillText("POKE " + M.num(el.cual, 1), lado / 2, lado / 2);
+    c.fillText("POKE " + M.num(el.cual, 1), m.w / 2, m.h / 2);
     c.restore();
   }
 
   // Un elemento sin imagen: un recuadro a rayas para que se vea que esta ahi y
   // se pueda seleccionar y mover. Si no, seria invisible e imposible de tocar.
-  pintarHueco(c, el, marca) {
-    const w = Math.max(M.num(el.ancho, 32), 8);
-    const hh = Math.max(M.num(el.alto, 32), 8);
+  pintarHueco(c, el, marca, m) {
+    const w = m.w, hh = m.h;
     c.save();
     c.strokeStyle = "rgba(255,140,120,0.9)";
     c.setLineDash([3, 2]);
@@ -488,17 +576,37 @@ export class Lienzo {
     if (!el) return;
     const r = this.rectanguloPantalla(el);
     if (!r) return;
+    // Los cuatro vertices YA GIRADOS. Con un rectangulo recto no valdria: un
+    // elemento de lado se enseñaria con un contorno derecho y los tiradores
+    // caerian donde no esta.
+    const v = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([u, w]) =>
+      this.girar(r, r.x + r.w * u, r.y + r.h * w));
 
     c.save();
     c.strokeStyle = "#4b9fea";
     c.lineWidth = 1;
     c.setLineDash([4, 3]);
-    c.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    c.beginPath();
+    c.moveTo(v[0].x + 0.5, v[0].y + 0.5);
+    for (let i = 1; i < 4; i++) c.lineTo(v[i].x + 0.5, v[i].y + 0.5);
+    c.closePath();
+    c.stroke();
     c.setLineDash([]);
 
-    if (this.redimensionable(el)) {
+    if (this.transformable(el)) {
+      // El palito y la bolita de girar, que salen del borde de arriba.
+      const g = this.puntoGiro(r);
+      const arriba = this.girar(r, r.x + r.w / 2, r.y);
+      c.beginPath();
+      c.moveTo(arriba.x, arriba.y);
+      c.lineTo(g.x, g.y);
+      c.stroke();
       c.fillStyle = "#fff";
-      c.strokeStyle = "#4b9fea";
+      c.beginPath();
+      c.arc(g.x, g.y, GIRO_RADIO, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+
       for (const t of TIRADORES) {
         const p = this.puntoTirador(r, t);
         c.fillRect(p.x - TIRADOR / 2, p.y - TIRADOR / 2, TIRADOR, TIRADOR);
@@ -508,25 +616,41 @@ export class Lienzo {
     c.restore();
   }
 
-  // Solo tienen tamaño propio los que se dibujan por color o miden una caja. Una
-  // imagen la mide su PNG, asi que estirarla desde el editor engañaria.
-  redimensionable(el) {
-    if (el.tipo === "panel") return true;
-    if (el.tipo === "boton") return !el.imagen;
-    if (el.tipo === "texto") return true;
-    return false;
+  // Todo se puede estirar y girar, incluidas las imagenes: si el diseño pide un
+  // ancho y un alto, el motor los traduce a zoom_x y zoom_y por separado. Lo
+  // unico que se respeta es el candado.
+  transformable(el) {
+    return !!el && el.bloqueado !== true;
   }
 
   puntoTirador(r, t) {
-    return { x: r.x + r.w * t.cx, y: r.y + r.h * t.cy };
+    return this.girar(r, r.x + r.w * t.cx, r.y + r.h * t.cy);
   }
+
+  // La bolita de girar, colgada por encima del borde de arriba. Va girada con el
+  // elemento, para que siga saliendo "de su cabeza" aunque este de lado.
+  puntoGiro(r) {
+    return this.girar(r, r.x + r.w / 2, r.y - GIRO_DIST);
+  }
+
+  //---------------------------------------------------------------------------
+  // GIRO. Las cuentas viven en modelo.js, junto a las demas que tienen que
+  // coincidir con Ruby, porque este fichero necesita el DOM y no se puede probar
+  // sin navegador. Aqui solo se les pasa el rectangulo.
+  //
+  //   girar     de un punto de la caja sin girar a donde se ve. Para el contorno
+  //             y los tiradores.
+  //   desgirar  de donde esta el raton a la caja sin girar. Para los clics.
+  //---------------------------------------------------------------------------
+  girar(r, px, py) { return M.girarPunto(r, r.ang, px, py); }
+  desgirar(r, px, py) { return M.desgirarPunto(r, r.ang, px, py); }
 
   // Rectangulo del elemento EN PIXELES DE PANTALLA, ya con el zoom aplicado.
   rectanguloPantalla(el) {
     const l = this.rectanguloLogico(el);
     if (!l) return null;
     const z = this.zoom;
-    return { x: l.x * z, y: l.y * z, w: Math.max(l.w * z, 4), h: Math.max(l.h * z, 4) };
+    return { x: l.x * z, y: l.y * z, w: Math.max(l.w * z, 4), h: Math.max(l.h * z, 4), ang: l.ang };
   }
 
   // Rectangulo en coordenadas del lienzo (512x384), en el instante actual.
@@ -535,40 +659,52 @@ export class Lienzo {
     const y = M.valorDe(el, "y", this.tiempo);
     const zoom = M.valorDe(el, "zoom", this.tiempo);
     const m = this.medidaElemento(el);
-    return { x, y, w: m.w * zoom, h: m.h * zoom };
+    // El zoom crece desde el CENTRO, igual que en el juego.
+    const caja = M.cajaConZoom(x, y, m.w, m.h, zoom);
+    caja.ang = M.valorDe(el, "angulo", this.tiempo);
+    return caja;
   }
 
-  // Cuanto mide un elemento. Los que tienen ancho y alto propios usan los suyos;
-  // los de imagen, lo que mida la imagen; el texto se mide con la fuente.
+  // Cuanto ocupa un elemento en pantalla: lo que pida el diseño, y si no pide
+  // nada, su tamaño natural.
   medidaElemento(el) {
+    const nat = this.medidaNatural(el);
+    let w = M.num(el.ancho, 0) > 0 ? M.num(el.ancho, 0) : nat.w;
+    let hh = M.num(el.alto, 0) > 0 ? M.num(el.alto, 0) : nat.h;
+    // Por debajo de 32 el marco de una ventana no cabe y se ve roto. Mismo
+    // limite que Ventana::MINIMO en Ruby.
+    if (el.tipo === "ventana") { w = Math.max(w, 32); hh = Math.max(hh, 32); }
+    return { w: Math.max(w, 1), h: Math.max(hh, 1) };
+  }
+
+  // Cuanto mide SIN estirar: lo que trae su imagen, lo que ocupa su texto, o el
+  // tamaño de partida de los que se dibujan por color.
+  medidaNatural(el) {
     if (el.tipo === "pokemon") {
       const lado = (el.modo === "frente" || el.modo === "espalda") ? 128 : 64;
       return { w: lado, h: lado };
-    }
-    if (el.tipo === "barra" || el.tipo === "panel" || (el.tipo === "boton" && !el.imagen)) {
-      return { w: Math.max(M.num(el.ancho, 1), 1), h: Math.max(M.num(el.alto, 1), 1) };
     }
     if (el.tipo === "texto") {
       const tam = M.num(el.tamano, M.TEXTO_TAMANO);
       // La misma medida que usa Texto#medir en Ruby, para que la caja que se
       // dibuja y la que se puede arrastrar sean la misma que la del juego.
       const medida = this.medirTexto(this.ctx2d, D.rellenarEjemplo(el.texto), tam);
-      const w = M.num(el.ancho, 0) > 0 ? M.num(el.ancho, 0) : Math.ceil(medida.ancho) + 4;
-      const hh = M.num(el.alto, 0) > 0 ? M.num(el.alto, 0) : Math.max(medida.alto, tam + 4);
-      return { w: Math.max(w, 1), h: Math.max(hh, 1) };
+      return { w: Math.ceil(medida.ancho) + 4, h: Math.max(medida.alto, tam + 4) };
     }
-    // imagen y animado
-    const dato = G.imagenEnCache(el.imagen);
-    if (dato && dato.ancho) {
-      if (el.tipo === "animado") {
-        const n = Math.max(M.num(el.fotogramas, 1), 1);
-        const fw = M.num(el.ancho_fotograma, 0) > 0 ? M.num(el.ancho_fotograma, 0) : Math.floor(dato.ancho / n);
-        const fh = M.num(el.alto_fotograma, 0) > 0 ? M.num(el.alto_fotograma, 0) : dato.alto;
-        return { w: Math.max(fw, 1), h: Math.max(fh, 1) };
-      }
-      return { w: dato.ancho, h: dato.alto };
+    if (el.tipo === "animado") {
+      const dato = G.imagenEnCache(el.imagen);
+      if (!dato || !dato.ancho) return { w: 32, h: 32 };
+      const n = Math.max(M.num(el.fotogramas, 1), 1);
+      const fw = M.num(el.ancho_fotograma, 0) > 0 ? M.num(el.ancho_fotograma, 0) : Math.floor(dato.ancho / n);
+      const fh = M.num(el.alto_fotograma, 0) > 0 ? M.num(el.alto_fotograma, 0) : dato.alto;
+      return { w: Math.max(fw, 1), h: Math.max(fh, 1) };
     }
-    return { w: Math.max(M.num(el.ancho, 32), 8), h: Math.max(M.num(el.alto, 32), 8) };
+    if (el.tipo === "imagen" || (el.tipo === "boton" && el.imagen)) {
+      const dato = G.imagenEnCache(el.imagen);
+      return (dato && dato.ancho) ? { w: dato.ancho, h: dato.alto } : { w: 32, h: 32 };
+    }
+    // panel, barra, ventana y boton de color: se dibujan del tamaño que se pida.
+    return { w: 32, h: 32 };
   }
 
   //---------------------------------------------------------------------------
@@ -615,8 +751,21 @@ export class Lienzo {
 
     // Primero los tiradores del elegido: tienen prioridad sobre seleccionar otro.
     const elegido = this.elementoElegido();
-    if (elegido && this.redimensionable(elegido)) {
+    if (elegido && this.transformable(elegido)) {
       const r = this.rectanguloPantalla(elegido);
+      const g = this.puntoGiro(r);
+      if (Math.hypot(px - g.x, py - g.y) <= GIRO_RADIO + 4) {
+        this.op.antesDeCambiar?.("girar:" + elegido.id);
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        this.arrastre = {
+          modo: "girar", id: elegido.id, cx, cy,
+          a0: M.num(elegido.angulo, 0),
+          // Desde donde se empezo a tirar: se gira lo que se MUEVA el raton, no
+          // se salta de golpe al angulo donde se pincho.
+          apunta: Math.atan2(py - cy, px - cx)
+        };
+        return;
+      }
       for (const t of TIRADORES) {
         const p = this.puntoTirador(r, t);
         if (Math.abs(px - p.x) <= TIRADOR && Math.abs(py - p.y) <= TIRADOR) {
@@ -625,6 +774,7 @@ export class Lienzo {
           this.arrastre = {
             modo: "medida", tirador: t, id: elegido.id,
             ox: px, oy: py,
+            ang: M.num(elegido.angulo, 0),
             x0: M.num(elegido.x, 0), y0: M.num(elegido.y, 0),
             w0: m.w, h0: m.h
           };
@@ -648,43 +798,135 @@ export class Lienzo {
   // botones: si dos se solapan gana el que se ve.
   elementoEn(px, py) {
     const { x, y } = this.aLogico(px, py);
-    const lista = (this.diseno?.elementos || [])
+    // Se acierta sobre las copias dibujadas, pero se devuelve el elemento de
+    // ORIGEN: pulsar la tercera ficha de una lista repetida selecciona el grupo,
+    // no una copia que no existe en el fichero.
+    const lista = (this.expandidos || this.diseno?.elementos || [])
       .map((el, i) => ({ el, i }))
       .filter(({ el }) => el.visible !== false && el.bloqueado !== true)
       .sort((a, b) => (M.num(b.el.capa, 0) - M.num(a.el.capa, 0)) || (b.i - a.i));
     for (const { el } of lista) {
       const r = this.rectanguloLogico(el);
-      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return el;
+      // El punto se lleva al sistema del elemento, que puede estar girado. Misma
+      // cuenta que hace el motor para decidir si un boton se ha pulsado.
+      const p = this.desgirar(r, x, y);
+      if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
+        const origen = el._origen || el.id;
+        return (this.diseno.elementos || []).find(e => e.id === origen) || el;
+      }
     }
     return null;
   }
 
   alMover(e) {
     if (!this.arrastre) return;
+    const a = this.arrastre;
     const { px, py } = this.posicionEnCanvas(e);
-    const dx = (px - this.arrastre.ox) / this.zoom;
-    const dy = (py - this.arrastre.oy) / this.zoom;
-    const el = (this.diseno.elementos || []).find(x => x.id === this.arrastre.id);
+    const el = (this.diseno.elementos || []).find(x => x.id === a.id);
     if (!el) return;
 
-    if (this.arrastre.modo === "mover") {
-      el.x = this.ajustar(this.arrastre.x0 + dx, e.altKey);
-      el.y = this.ajustar(this.arrastre.y0 + dy, e.altKey);
+    if (a.modo === "girar") this.girarArrastrando(el, px, py, e);
+    else if (a.modo === "mover") {
+      el.x = this.ajustar(a.x0 + (px - a.ox) / this.zoom, e.altKey);
+      el.y = this.ajustar(a.y0 + (py - a.oy) / this.zoom, e.altKey);
     } else {
-      const t = this.arrastre.tirador;
-      let nx = this.arrastre.x0 + (t.dx ? dx : 0);
-      let ny = this.arrastre.y0 + (t.dy ? dy : 0);
-      let nw = this.arrastre.w0 + (t.dw ? t.dw * dx : 0);
-      let nh = this.arrastre.h0 + (t.dh ? t.dh * dy : 0);
-      if (nw < MINIMO) { nw = MINIMO; nx = this.arrastre.x0 + this.arrastre.w0 - MINIMO; }
-      if (nh < MINIMO) { nh = MINIMO; ny = this.arrastre.y0 + this.arrastre.h0 - MINIMO; }
-      if (t.dx) el.x = this.ajustar(nx, e.altKey);
-      if (t.dy) el.y = this.ajustar(ny, e.altKey);
-      if (t.dw) el.ancho = Math.round(this.ajustar(nw, e.altKey));
-      if (t.dh) el.alto = Math.round(this.ajustar(nh, e.altKey));
+      this.estirarArrastrando(el, px, py, e);
     }
     this.repintar();
     this.op.alCambiar?.(el, true);        // true = sigue arrastrando
+  }
+
+  //---------------------------------------------------------------------------
+  // GIRAR. Se suma lo que el raton ha barrido alrededor del centro desde que se
+  // agarro la bolita, no el angulo absoluto: asi no pega un salto al pinchar.
+  //---------------------------------------------------------------------------
+  girarArrastrando(el, px, py, e) {
+    const a = this.arrastre;
+    const barrido = Math.atan2(py - a.cy, px - a.cx) - a.apunta;
+    // En pantalla la y crece hacia abajo y en RGSS el angulo crece al reves, de
+    // ahi el signo.
+    let ang = a.a0 - (barrido * 180 / Math.PI);
+    if (e.shiftKey) ang = Math.round(ang / GIRO_PASO) * GIRO_PASO;
+    else ang = Math.round(ang * 10) / 10;
+    // Se deja siempre entre -180 y 180, que es como se lee mejor en el
+    // inspector: "-90" en vez de "270".
+    ang = ((ang % 360) + 360) % 360;
+    if (ang > 180) ang -= 360;
+    if (ang === 0) delete el.angulo; else el.angulo = ang;
+  }
+
+  //---------------------------------------------------------------------------
+  // ESTIRAR POR LAS ESQUINAS.
+  //
+  //   sin Shift  cada lado va por su cuenta y la cosa se DEFORMA, que es lo que
+  //              se quiere para estirar un fondo o achatar un marco
+  //   con Shift  se mantiene la proporcion, como en cualquier editor de imagenes
+  //   con Alt    no se imanta a la rejilla
+  //---------------------------------------------------------------------------
+  estirarArrastrando(el, px, py, e) {
+    const a = this.arrastre;
+    const t = a.tirador;
+    let dx = (px - a.ox) / this.zoom;
+    let dy = (py - a.oy) / this.zoom;
+
+    // El tiron se mide EN EL SISTEMA DEL ELEMENTO. Si esta girado 30 grados,
+    // tirar de su lado derecho tiene que ensancharlo por SU derecha, no por la
+    // derecha de la pantalla.
+    if (a.ang) {
+      const r = a.ang * Math.PI / 180;
+      const gx = dx * Math.cos(r) - dy * Math.sin(r);
+      const gy = dx * Math.sin(r) + dy * Math.cos(r);
+      dx = gx; dy = gy;
+    }
+
+    const dw = t.dw ? t.dw * dx : 0;
+    const dh = t.dh ? t.dh * dy : 0;
+    let nw = a.w0 + dw;
+    let nh = a.h0 + dh;
+
+    if (e.shiftKey && a.w0 > 0 && a.h0 > 0) {
+      const razon = a.w0 / a.h0;
+      if (!t.dh) nh = nw / razon;                                   // tirador de lado
+      else if (!t.dw) nw = nh * razon;                              // tirador de arriba o abajo
+      else if (Math.abs(dw) >= Math.abs(dh * razon)) nh = nw / razon;  // esquina: manda el que mas se movio
+      else nw = nh * razon;
+    } else {
+      // Se imanta el BORDE que se esta moviendo, que es lo util para cuadrar.
+      // Con Shift no se imanta: redondear rompe la proporcion que se acaba de
+      // pedir, y entonces Shift no serviria de nada.
+      if (t.dx) nw = a.x0 + a.w0 - this.ajustar(a.x0 + a.w0 - nw, e.altKey);
+      else if (t.dw) nw = this.ajustar(a.x0 + nw, e.altKey) - a.x0;
+      if (t.dy) nh = a.y0 + a.h0 - this.ajustar(a.y0 + a.h0 - nh, e.altKey);
+      else if (t.dh) nh = this.ajustar(a.y0 + nh, e.altKey) - a.y0;
+    }
+    nw = Math.max(Math.round(nw), MINIMO);
+    nh = Math.max(Math.round(nh), MINIMO);
+
+    // DONDE QUEDA LA ESQUINA QUE NO SE TOCA.
+    //
+    // Sin giro es evidente: si tiras del lado izquierdo, el derecho se queda
+    // donde estaba. Con giro no, porque el elemento gira alrededor de su centro
+    // y el centro se mueve al cambiar de tamaño. Se calcula donde tiene que
+    // quedar el centro nuevo para que el anclaje no se mueva en pantalla; sin
+    // giro esta misma cuenta da el resultado de siempre.
+    const fx = t.dx ? 1 : 0, fy = t.dy ? 1 : 0;
+    const ox = (fx - 0.5) * (a.w0 - nw);
+    const oy = (fy - 0.5) * (a.h0 - nh);
+    let mx = ox, my = oy;
+    if (a.ang) {
+      const r = a.ang * Math.PI / 180;
+      mx = ox * Math.cos(r) + oy * Math.sin(r);
+      my = -ox * Math.sin(r) + oy * Math.cos(r);
+    }
+    const cx = a.x0 + a.w0 / 2 + mx;
+    const cy = a.y0 + a.h0 / 2 + my;
+
+    const cambiaW = !!t.dw || (e.shiftKey && !!t.dh);
+    const cambiaH = !!t.dh || (e.shiftKey && !!t.dw);
+    if (cambiaW) el.ancho = nw;
+    if (cambiaH) el.alto = nh;
+    el.x = Math.round(cx - nw / 2);
+    el.y = Math.round(cy - nh / 2);
   }
 
   // Imantar a la rejilla, salvo que se tenga Alt pulsado (la escapatoria de
@@ -725,17 +967,30 @@ export class Lienzo {
 
     if (this.arrastre) return;
     const el = this.elementoElegido();
-    if (el && this.redimensionable(el)) {
+    if (el && this.transformable(el)) {
       const r = this.rectanguloPantalla(el);
+      const g = this.puntoGiro(r);
+      if (Math.hypot(px - g.x, py - g.y) <= GIRO_RADIO + 4) {
+        this.canvas.style.cursor = "grab";
+        return;
+      }
       for (const t of TIRADORES) {
         const p = this.puntoTirador(r, t);
         if (Math.abs(px - p.x) <= TIRADOR && Math.abs(py - p.y) <= TIRADOR) {
-          this.canvas.style.cursor = CURSORES[t.id];
+          this.canvas.style.cursor = this.cursorTirador(t, r.ang || 0);
           return;
         }
       }
     }
     this.canvas.style.cursor = this.elementoEn(px, py) ? "move" : "default";
+  }
+
+  // El cursor de estirar tiene que girar con el elemento: en algo puesto de lado,
+  // el tirador de la derecha estira hacia arriba y abajo, y una flecha que apunte
+  // al lado contrario despista mas de lo que ayuda.
+  cursorTirador(t, ang) {
+    const g = (((ANGULO_TIRADOR[t.id] - ang) % 360) + 360) % 360;
+    return CURSORES_POR_ANGULO[Math.round(g / 45) % 8];
   }
 
   // Mover con las flechas: 1 pixel, o un paso de rejilla con Shift.

@@ -43,9 +43,41 @@ falta. Probado en Essentials v21.1 sobre MKXP-Z.
 | **Texto** | Con datos del juego entre llaves (ver abajo), contorno, y colocacion fina |
 | **Boton** | Con imagen o como rectangulo de color. Cambia al pasar y al pulsar, y puede crecer |
 | **Rectangulo** | Fondos y separadores, con borde opcional |
+| **Ventana** | El marco de verdad del juego, no un rectangulo plano. Sin elegir marco usa **el que el jugador tenga puesto en Opciones**, asi que tus pantallas cambian con las suyas |
 | **Animacion** | Una hoja de sprites que se reproduce sola |
 | **Barra** | Se llena segun un dato. Cambia de color como las barras de vida |
 | **Pokemon** | El icono o el sprite de un miembro del equipo |
+
+### Estirar y girar, como en un editor de imagenes
+
+Cualquier elemento se agarra por las esquinas y se estira, **imagenes incluidas**:
+
+| Gesto | Que hace |
+|---|---|
+| Arrastrar una esquina | Estira **deformando** por donde tires |
+| **Shift** + esquina | Estira **sin deformar** |
+| Arrastrar la bolita de arriba | Gira |
+| **Shift** + bolita | Gira de **15 en 15 grados** |
+| Boton *Tamaño original* | Devuelve la imagen a su tamaño real |
+
+El giro y el tamaño trabajan sobre el **centro**, y un boton girado se puede pulsar
+donde se ve, no donde estaria sin girar.
+
+### Listas que se repiten solas
+
+Marcas un elemento como parte de un grupo y se dibuja N veces: en fila, en columna
+o en rejilla, con la entrada escalonada para que aparezca en cascada. En los textos
+y en las condiciones, `{n}` es el numero de copia — o sea que
+`{equipo.{n}.nombre}` da el nombre del Pokemon 1, 2, 3...
+
+Los seis del equipo, con su icono, su nombre y su barra de vida, **con una sola
+definicion de cada cosa**.
+
+### Mostrar algo solo si se cumple una condicion
+
+Cada elemento puede mirar un dato del juego y decidir si se ve: *si la vida baja de
+20*, *si el hueco del equipo esta vacio*, *si el interruptor 12 esta activado*. Un
+elemento escondido tampoco se puede pulsar ni elegir con las flechas.
 
 ### Datos del juego en vivo
 
@@ -112,6 +144,9 @@ Con **raton** y con **teclado** a la vez, sin configurar nada:
 | | |
 |---|---|
 | Arrastrar | Mover un elemento |
+| Arrastrar una esquina | Estirar (deformando) |
+| Shift + esquina | Estirar sin deformar |
+| Bolita de arriba | Girar (Shift: de 15 en 15 grados) |
 | Flechas | Mover 1 pixel |
 | Shift + flechas | Mover un paso de rejilla |
 | Alt mientras arrastras | Sin imantar a la rejilla |
