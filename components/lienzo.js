@@ -481,13 +481,33 @@ export class Lienzo {
   // deja ver donde queda el borde de relleno).
   pintarBarra(c, el, m) {
     const w = m.w, hh = m.h;
+    const f = 0.6;                       // muestra: algo mas de la mitad
+
+    // CON GRAFICO. La imagen es una tira con un estado por fila (llena, media,
+    // baja), igual que overlay_hp.png de Essentials. Si el editor pintara aqui un
+    // rectangulo de color, enseñaria una barra que el juego no va a dibujar.
+    if (el.imagen) {
+      const fondo = this.pedirImagen(el.imagen_fondo);
+      if (fondo) c.drawImage(fondo.img, 0, 0, w, hh);
+      const tira = this.pedirImagen(el.imagen);
+      if (tira) {
+        const filas = Math.max(M.num(el.tramos_imagen, 3), 1);
+        const altoFila = Math.max(Math.floor(tira.alto / filas), 1);
+        // A 0.6 toca la fila de arriba, que es la de "llena".
+        c.drawImage(tira.img, 0, 0, Math.round(tira.ancho * f), altoFila,
+                    0, 0, Math.round(w * f), hh);
+      } else if (!fondo) {
+        this.pintarHueco(c, el, "?", m);
+      }
+      return;
+    }
+
     const g = el.borde_grosor == null ? 1 : M.num(el.borde_grosor, 1);
     this.recuadro(c, 0, 0, w, hh, colorCss(el.color_fondo, "#20242BFF"),
       el.borde ? colorCss(el.borde, "#FFFFFFFF") : null, g);
     const dentro = el.borde ? g : 0;
     const utilW = w - dentro * 2, utilH = hh - dentro * 2;
     if (utilW <= 0 || utilH <= 0) return;
-    const f = 0.6;                       // muestra: algo mas de la mitad
     const largo = Math.max(Math.round(utilW * f), 1);
     c.fillStyle = colorCss(el.color, "#68D076FF");
     if (String(el.hacia) === "izquierda") c.fillRect(dentro + utilW - largo, dentro, largo, utilH);

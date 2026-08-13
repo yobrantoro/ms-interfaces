@@ -73,6 +73,20 @@ y en las condiciones, `{n}` es el numero de copia — o sea que
 Los seis del equipo, con su icono, su nombre y su barra de vida, **con una sola
 definicion de cada cosa**.
 
+### Barras con el grafico del juego
+
+Una barra puede pintarse con arte en vez de con colores planos. La imagen es una
+**tira con un estado por fila** (llena, media, baja), que es el formato que ya
+trae `Graphics/UI/Party/overlay_hp` de Essentials: **el arte del propio juego vale
+tal cual**. El lienzo la dibuja igual que el juego, tira incluida.
+
+### Que hay elegido, como dato
+
+La ficha del elemento marcado puede verse distinta sin nada raro: **que boton
+esta elegido es un dato mas**, asi que se combina con las condiciones y con el
+numero de copia de las listas repetidas. Es lo que hace que una pantalla de
+equipo resalte el Pokemon sobre el que estas.
+
 ### Mostrar algo solo si se cumple una condicion
 
 Cada elemento puede mirar un dato del juego y decidir si se ve: *si la vida baja de

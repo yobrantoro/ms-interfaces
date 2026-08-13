@@ -55,6 +55,16 @@ export const DATOS = [
     "ejemplo": "Pueblo Rumh"
   },
   {
+    "clave": "seleccion",
+    "que": "Que copia esta elegida ahora",
+    "ejemplo": "1"
+  },
+  {
+    "clave": "seleccion.id",
+    "que": "El nombre del elemento elegido",
+    "ejemplo": "boton_1"
+  },
+  {
     "clave": "equipo.total",
     "que": "Cuantos Pokemon lleva",
     "ejemplo": "4"

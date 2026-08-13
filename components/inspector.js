@@ -547,6 +547,30 @@ export class Inspector {
     this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
       textContent: "Si dejas el maximo vacio, el valor se toma como porcentaje (0 a 100). Para una barra de vida: valor {equipo.1.hp} y maximo {equipo.1.hp_max}." }));
 
+    // CON GRAFICO O CON COLORES. Con grafico se usa el arte del juego y los
+    // colores dejan de pintar nada, asi que se esconden en vez de dejarlos ahi
+    // engañando.
+    this.cuerpo.appendChild(titulillo("Con grafico (opcional)"));
+    this.cuerpo.appendChild(this.filaGrafico("Barra", el, "imagen"));
+    this.cuerpo.appendChild(this.filaGrafico("Canal vacio", el, "imagen_fondo"));
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "La barra es una TIRA con un estado por fila, de arriba a abajo: llena, media y baja. Vale tal cual Graphics/UI/Party/overlay_hp, que es la del juego." }));
+    if (el.imagen) {
+      this.cuerpo.appendChild(fila("Filas de la tira",
+        campoNumero(M.num(el.tramos_imagen, 3), (v2) => this.fijar(el, "tramos_imagen", (v2 == null || v2 === 3) ? null : Math.max(1, Math.round(v2))), { min: 1, max: 8 })));
+      this.cuerpo.appendChild(fila("",
+        boton("Quitar el grafico", () => {
+          this.op.antesDeCambiar?.();
+          delete el.imagen;
+          delete el.imagen_fondo;
+          delete el.tramos_imagen;
+          this.op.alCambiar?.();
+          this.refrescar();
+        })));
+      this.pintarBorde(el);
+      return;
+    }
+
     this.cuerpo.appendChild(fila("Colores por vida",
       casilla(el.por_tramos !== false, (v2) => this.fijar(el, "por_tramos", v2 ? null : false), "verde, amarillo y rojo")));
     this.cuerpo.appendChild(fila("Color", campoColor(el.color || "#68D076FF", (x) => this.fijar(el, "color", x))));
