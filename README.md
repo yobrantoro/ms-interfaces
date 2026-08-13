@@ -87,11 +87,49 @@ esta elegido es un dato mas**, asi que se combina con las condiciones y con el
 numero de copia de las listas repetidas. Es lo que hace que una pantalla de
 equipo resalte el Pokemon sobre el que estas.
 
+### Varios elementos a la vez
+
+Con veinte botones, moverlos de uno en uno no es una opcion. **Ctrl o Shift +
+clic** los añade al grupo (en el lienzo o en la lista de capas), y **arrastrando
+por un hueco vacio** sale un rectangulo de goma que coge todo lo que toque.
+
+Una vez marcados: se mueven juntos, las flechas los mueven todos, y aparece una
+barra con **seis alineaciones** y **repartir en fila o columna**.
+
+Se alinea contra el elemento **que tiene los tiradores**, no contra el borde del
+grupo: eliges el que ya esta bien puesto y los demas van a el. Repartir deja el
+**mismo hueco** entre unos y otros, no reparte los centros — con tamaños distintos
+lo segundo deja huecos desiguales, que es justo lo que se ve mal.
+
+Borrar y duplicar tambien trabajan sobre el grupo, en un solo paso de deshacer.
+
 ### Mostrar algo solo si se cumple una condicion
 
-Cada elemento puede mirar un dato del juego y decidir si se ve: *si la vida baja de
-20*, *si el hueco del equipo esta vacio*, *si el interruptor 12 esta activado*. Un
-elemento escondido tampoco se puede pulsar ni elegir con las flechas.
+Se elige **de que va** la condicion y se rellena con desplegables:
+
+| | |
+|---|---|
+| **Cuando este elegido un boton** | Lista de los botones que hay en la pantalla |
+| **Un interruptor del juego** | Lista con **sus nombres**: `0045: Derrotado Gim 4` |
+| **Una variable del juego** | Igual, con sus nombres |
+| **Otro dato** | A mano, para lo que no cabe en los tres de arriba |
+
+Los interruptores y variables se leen de `System.rxdata` y se enseñan igual que la
+pestaña de condiciones de un evento de RPG Maker, que es donde ya se sabe leerlos.
+
+En una lista repetida hay ademas la opcion **"el de esta misma copia"**: cada copia
+mira su propio boton, que es lo que hace que la ficha elegida de un equipo se vea
+distinta.
+
+Un elemento escondido tampoco se puede pulsar, ni elegir con las flechas, ni
+responder a su tecla rapida.
+
+### Teclas de acceso rapido
+
+Cada boton puede llevar una tecla que lo dispara **desde cualquier sitio de la
+pantalla**, sin recorrer la lista con las flechas — lo que hace todo el mundo en un
+menu de pausa. El editor avisa si dos botones comparten tecla o si eliges una que
+ya usa el juego.
 
 ### Datos del juego en vivo
 
@@ -161,7 +199,9 @@ Con **raton** y con **teclado** a la vez, sin configurar nada:
 | Arrastrar una esquina | Estirar (deformando) |
 | Shift + esquina | Estirar sin deformar |
 | Bolita de arriba | Girar (Shift: de 15 en 15 grados) |
-| Flechas | Mover 1 pixel |
+| **Ctrl o Shift + clic** | **Añadir o quitar del grupo** |
+| **Arrastrar en un hueco** | **Rectangulo de goma: coge todo lo que toque** |
+| Flechas | Mover 1 pixel (todo el grupo) |
 | Shift + flechas | Mover un paso de rejilla |
 | Alt mientras arrastras | Sin imantar a la rejilla |
 | Ctrl + rueda | Zoom |

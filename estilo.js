@@ -72,6 +72,9 @@ export const CSS = `
 .ui-capa:hover { background: var(--bg-hover, var(--bg-primary)); }
 .ui-capa.elegida { background: var(--accent); color: #fff; }
 .ui-capa.elegida .ui-capa-tipo { color: rgba(255,255,255,.75); }
+/* Los demas del grupo: se ve que van juntos sin competir con el principal. Se
+   usa rgba y no color-mix por si la version del editor lleva un motor viejo. */
+.ui-capa.en-grupo { background: rgba(75,159,234,.20); box-shadow: inset 2px 0 0 var(--accent); }
 .ui-capa.arrastrando { opacity: .4; }
 .ui-capa.destino { border-top: 2px solid var(--accent); }
 .ui-capa-id { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -65,6 +65,11 @@ export const DATOS = [
     "ejemplo": "boton_1"
   },
   {
+    "clave": "seleccion.NOMBRE",
+    "que": "1 si ese boton es el elegido",
+    "ejemplo": "1"
+  },
+  {
     "clave": "equipo.total",
     "que": "Cuantos Pokemon lleva",
     "ejemplo": "4"

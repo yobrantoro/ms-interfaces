@@ -54,6 +54,8 @@ export class Lienzo {
     this.op = opciones;                 // {alSeleccionar, alCambiar, alMoverRaton}
     this.diseno = null;
     this.seleccion = null;
+    this.extra = new Set();          // los demas marcados con Ctrl
+    this.goma = null;                // rectangulo de goma mientras se arrastra
     this.tiempo = 0;
     this.zoom = 2;
     this.rejilla = true;
@@ -79,7 +81,31 @@ export class Lienzo {
 
   //---------------------------------------------------------------------------
   fijarDiseno(diseno) { this.diseno = diseno; this.repintar(); }
-  fijarSeleccion(id) { this.seleccion = id; this.repintar(); }
+
+  // "seleccion" es el elemento PRINCIPAL: el que enseña el inspector y el que
+  // lleva los tiradores. "extra" son los demas marcados con Ctrl, que se mueven
+  // con el pero no se editan uno a uno.
+  //
+  // Se guardan aparte en vez de una lista sin mas porque el inspector tiene que
+  // enseñar UNO, y en un grupo hace falta saber cual manda al alinear.
+  fijarSeleccion(id, extra) {
+    this.seleccion = id;
+    this.extra = new Set(extra || []);
+    this.repintar();
+  }
+
+  // Todos los marcados, con el principal primero.
+  marcados() {
+    const salida = [];
+    if (this.seleccion) salida.push(this.seleccion);
+    for (const id of (this.extra || [])) if (id !== this.seleccion) salida.push(id);
+    return salida;
+  }
+
+  elementosMarcados() {
+    const lista = this.diseno?.elementos || [];
+    return this.marcados().map(id => lista.find(e => e.id === id)).filter(Boolean);
+  }
   fijarTiempo(t) { this.tiempo = t; this.repintar(); }
   fijarZoom(z) { this.zoom = Math.max(1, Math.min(6, z)); this.repintar(); }
   fijarRejilla(v) { this.rejilla = !!v; this.repintar(); }
@@ -147,12 +173,18 @@ export class Lienzo {
     // Se dibuja la lista EXPANDIDA: un grupo repetido se ve con sus seis copias,
     // igual que en el juego. Lo que se edita sigue siendo el elemento de origen.
     this.expandidos = M.expandirRepeticiones(this.diseno, (clave) => D.rellenarEjemplo(clave));
+    // Quien quedaria elegido al abrirse la pantalla. Se calcula UNA vez por
+    // repintado y SIN mirar condiciones: si mirara condiciones, evaluar una
+    // condicion sobre {seleccion} volveria a preguntar quien esta elegido y se
+    // llamaria a si mismo sin parar.
+    this._elegido = this.primerBoton();
     const ordenados = this.expandidos
       .map((el, i) => ({ el, i }))
       .sort((a, b) => (M.num(a.el.capa, 0) - M.num(b.el.capa, 0)) || (a.i - b.i));
 
     for (const { el } of ordenados) {
       if (el.visible === false) continue;
+      if (!this.visiblePorCondicion(el)) continue;
       this.pintarElemento(c, el);
     }
 
@@ -195,11 +227,44 @@ export class Lienzo {
     c.restore();
   }
 
+  //---------------------------------------------------------------------------
+  // EL EDITOR TIENE QUE ESCONDER LO MISMO QUE EL JUEGO.
+  //
+  // Antes el lienzo no miraba "mostrar_si" y dibujaba TODO. En una ficha con dos
+  // insignias de sexo excluyentes salian las dos, una encima de otra, y parecia
+  // que todos los Pokemon iban a ser del mismo sexo. El diseño estaba bien; el
+  // que mentia era el editor.
+  //
+  // Se evalua con los valores de ejemplo del catalogo, los mismos que ya se usan
+  // para los textos.
+  //---------------------------------------------------------------------------
+  visiblePorCondicion(el) {
+    if (!el.mostrar_si) return true;
+    return M.cumpleCondicion(el.mostrar_si, (clave) => this.valorEjemplo(clave));
+  }
+
+  valorEjemplo(clave) {
+    // {seleccion} no sale del catalogo: depende de esta pantalla, asi que se
+    // simula con el boton que quedaria elegido al abrirse.
+    if (clave === "seleccion" || clave === "seleccion.id") {
+      const b = this._elegido;
+      if (!b) return M.HUECO;
+      return clave === "seleccion" ? String(b._copia == null ? 1 : b._copia) : String(b.id);
+    }
+    return D.rellenarEjemplo("{" + clave + "}");
+  }
+
   // El boton que estara elegido al abrirse la pantalla: el mismo criterio que usa
   // el motor (primero el orden_teclado que se haya puesto, y si no, de arriba
-  // abajo y de izquierda a derecha). Sirve para enseñar donde caera el cursor.
+  // abajo y de izquierda a derecha). Sirve para enseñar donde caera el cursor y
+  // para resolver {seleccion}.
+  //
+  // Se mira la lista EXPANDIDA, no la de origen: en una lista repetida el que
+  // queda elegido es la primera COPIA, y de ella sale el numero que compara
+  // {seleccion}.
   primerBoton() {
-    const botones = (this.diseno?.elementos || []).filter(e => e.tipo === "boton" && e.visible !== false);
+    const botones = (this.expandidos || this.diseno?.elementos || [])
+      .filter(e => e.tipo === "boton" && e.visible !== false);
     if (!botones.length) return null;
     return botones.slice().sort((a, b) => {
       const oa = a.orden_teclado == null ? 1 : 0, ob = b.orden_teclado == null ? 1 : 0;
@@ -220,7 +285,7 @@ export class Lienzo {
     // que hara en el juego. Si no, el editor enseñaria la flecha en una esquina
     // y en el juego apareceria en otro sitio.
     if (el.sigue_seleccion) {
-      const destino = this.primerBoton();
+      const destino = this._elegido || this.primerBoton();
       if (destino) {
         const mc = this.medidaElemento(el);
         const mb = this.medidaElemento(destino);
@@ -592,6 +657,39 @@ export class Lienzo {
   // Contorno y tiradores del elemento elegido.
   //---------------------------------------------------------------------------
   pintarSeleccion(c) {
+    // Los acompañantes, con un contorno mas tenue: se ve que se van a mover
+    // juntos, pero no compiten con el principal ni llevan tiradores.
+    for (const otro of this.elementosMarcados()) {
+      if (otro.id === this.seleccion) continue;
+      const ro = this.rectanguloPantalla(otro);
+      if (!ro) continue;
+      c.save();
+      c.strokeStyle = "rgba(75,159,234,0.55)";
+      c.lineWidth = 1;
+      c.setLineDash([3, 3]);
+      const v = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([u, w]) => this.girar(ro, ro.x + ro.w * u, ro.y + ro.h * w));
+      c.beginPath();
+      c.moveTo(v[0].x + 0.5, v[0].y + 0.5);
+      for (let i = 1; i < 4; i++) c.lineTo(v[i].x + 0.5, v[i].y + 0.5);
+      c.closePath();
+      c.stroke();
+      c.restore();
+    }
+
+    // El rectangulo de goma, mientras se arrastra por un hueco vacio.
+    if (this.goma) {
+      const g = this.goma;
+      c.save();
+      c.strokeStyle = "#4b9fea";
+      c.fillStyle = "rgba(75,159,234,0.12)";
+      c.lineWidth = 1;
+      const x = Math.min(g.x0, g.x1), y = Math.min(g.y0, g.y1);
+      const w = Math.abs(g.x1 - g.x0), hh = Math.abs(g.y1 - g.y0);
+      c.fillRect(x, y, w, hh);
+      c.strokeRect(x + 0.5, y + 0.5, w, hh);
+      c.restore();
+    }
+
     const el = this.elementoElegido();
     if (!el) return;
     const r = this.rectanguloPantalla(el);
@@ -804,13 +902,39 @@ export class Lienzo {
     }
 
     const tocado = this.elementoEn(px, py);
-    if (!tocado) { this.op.alSeleccionar?.(null); return; }
-    if (tocado.id !== this.seleccion) this.op.alSeleccionar?.(tocado.id);
+
+    // NADA DEBAJO: empieza el rectangulo de goma. Antes esto solo deseleccionaba,
+    // que es medio gesto: si arrastras por un hueco vacio lo natural es que
+    // estes intentando rodear varias cosas.
+    if (!tocado) {
+      if (!e.ctrlKey && !e.shiftKey) this.op.alSeleccionar?.(null);
+      this.goma = { x0: px, y0: py, x1: px, y1: py, sumar: e.ctrlKey || e.shiftKey };
+      return;
+    }
+
+    // CTRL O SHIFT: añadir o quitar del grupo, sin empezar a mover. Quitar
+    // importa tanto como añadir: rodeas seis y descartas el que no querias.
+    if (e.ctrlKey || e.shiftKey) {
+      this.op.alMarcar?.(tocado.id, "alternar");
+      return;
+    }
+
+    // Pulsar sobre algo que YA esta en el grupo mueve el grupo entero; pulsar
+    // fuera de el lo deshace y empieza de cero, que es como se comporta cualquier
+    // editor.
+    const enGrupo = this.marcados().includes(tocado.id);
+    if (!enGrupo) this.op.alSeleccionar?.(tocado.id);
+    else if (tocado.id !== this.seleccion) this.op.alMarcar?.(tocado.id, "principal");
+
+    const grupo = enGrupo ? this.elementosMarcados() : [tocado];
     this.op.antesDeCambiar?.("mover:" + tocado.id);
     this.arrastre = {
       modo: "mover", id: tocado.id,
       ox: px, oy: py,
-      x0: M.num(tocado.x, 0), y0: M.num(tocado.y, 0)
+      x0: M.num(tocado.x, 0), y0: M.num(tocado.y, 0),
+      // Se apunta de donde salia CADA UNO: mover el grupo es sumarle a todos el
+      // mismo desplazamiento, no arrastrarlos uno detras de otro.
+      grupo: grupo.map(g => ({ el: g, x0: M.num(g.x, 0), y0: M.num(g.y, 0) }))
     };
   }
 
@@ -839,6 +963,15 @@ export class Lienzo {
   }
 
   alMover(e) {
+    // El rectangulo de goma se dibuja mientras se arrastra; lo que quede dentro
+    // se marca al soltar.
+    if (this.goma) {
+      const p = this.posicionEnCanvas(e);
+      this.goma.x1 = p.px;
+      this.goma.y1 = p.py;
+      this.repintarCapa();
+      return;
+    }
     if (!this.arrastre) return;
     const a = this.arrastre;
     const { px, py } = this.posicionEnCanvas(e);
@@ -847,8 +980,16 @@ export class Lienzo {
 
     if (a.modo === "girar") this.girarArrastrando(el, px, py, e);
     else if (a.modo === "mover") {
-      el.x = this.ajustar(a.x0 + (px - a.ox) / this.zoom, e.altKey);
-      el.y = this.ajustar(a.y0 + (py - a.oy) / this.zoom, e.altKey);
+      // El desplazamiento se calcula UNA vez con el elemento que se agarro y se
+      // aplica igual a todos. Si cada uno se imantara por su cuenta, un grupo
+      // desalineado se cuadraria solo y se perderia la disposicion que tenia.
+      const nx = this.ajustar(a.x0 + (px - a.ox) / this.zoom, e.altKey);
+      const ny = this.ajustar(a.y0 + (py - a.oy) / this.zoom, e.altKey);
+      const dx = nx - a.x0, dy = ny - a.y0;
+      for (const g of (a.grupo || [{ el, x0: a.x0, y0: a.y0 }])) {
+        g.el.x = g.x0 + dx;
+        g.el.y = g.y0 + dy;
+      }
     } else {
       this.estirarArrastrando(el, px, py, e);
     }
@@ -959,6 +1100,9 @@ export class Lienzo {
   // Suelta el elemento donde este, sin aplicar mas movimiento. Se usa al perder
   // el foco: mejor dejarlo donde estaba que darle un salto al volver.
   cancelarArrastre() {
+    // La goma tambien se cancela: si la ventana pierde el foco a medias, dejarla
+    // pintada haria creer que sigue viva.
+    if (this.goma) { this.goma = null; this.repintarCapa(); }
     if (!this.arrastre) return;
     this.arrastre = null;
     this.op.alCambiar?.(null, false);
@@ -973,10 +1117,38 @@ export class Lienzo {
   }
 
   alSoltar() {
+    if (this.goma) {
+      const g = this.goma;
+      this.goma = null;
+      // Un arrastre de menos de cuatro pixeles es un clic con pulso, no una
+      // seleccion: si no, cualquier clic en el fondo marcaria cosas sin querer.
+      if (Math.abs(g.x1 - g.x0) >= 4 || Math.abs(g.y1 - g.y0) >= 4) {
+        this.op.alMarcarVarios?.(this.dentroDeGoma(g), g.sumar);
+      }
+      this.repintarCapa();
+      return;
+    }
     if (!this.arrastre) return;
     const el = (this.diseno.elementos || []).find(x => x.id === this.arrastre.id);
     this.arrastre = null;
     if (el) this.op.alCambiar?.(el, false);
+  }
+
+  // Que elementos toca el rectangulo de goma. Basta con que se SOLAPEN, no hace
+  // falta rodearlos del todo: rodear entero obliga a barridos enormes y es la
+  // queja clasica de las herramientas que lo hacen asi.
+  dentroDeGoma(g) {
+    const z = this.zoom;
+    const x0 = Math.min(g.x0, g.x1) / z, x1 = Math.max(g.x0, g.x1) / z;
+    const y0 = Math.min(g.y0, g.y1) / z, y1 = Math.max(g.y0, g.y1) / z;
+    const salida = new Set();
+    for (const el of (this.expandidos || this.diseno?.elementos || [])) {
+      if (el.visible === false || el.bloqueado === true) continue;
+      const r = this.rectanguloLogico(el);
+      if (r.x > x1 || r.x + r.w < x0 || r.y > y1 || r.y + r.h < y0) continue;
+      salida.add(el._origen || el.id);
+    }
+    return [...salida];
   }
 
   // Cursor y coordenadas del pie.
@@ -1013,15 +1185,91 @@ export class Lienzo {
     return CURSORES_POR_ANGULO[Math.round(g / 45) % 8];
   }
 
-  // Mover con las flechas: 1 pixel, o un paso de rejilla con Shift.
+  // Mover con las flechas: 1 pixel, o un paso de rejilla con Shift. Mueve TODO
+  // el grupo, que es lo util cuando ya has marcado seis botones.
   empujar(dx, dy, paso) {
-    const el = this.elementoElegido();
-    if (!el) return false;
-    this.op.antesDeCambiar?.("empujar:" + el.id);
-    el.x = M.num(el.x, 0) + dx * paso;
-    el.y = M.num(el.y, 0) + dy * paso;
+    const grupo = this.elementosMarcados();
+    if (!grupo.length) return false;
+    this.op.antesDeCambiar?.("empujar:" + this.seleccion);
+    for (const el of grupo) {
+      el.x = M.num(el.x, 0) + dx * paso;
+      el.y = M.num(el.y, 0) + dy * paso;
+    }
     this.repintar();
-    this.op.alCambiar?.(el, false);
+    this.op.alCambiar?.(grupo[0], false);
+    return true;
+  }
+
+  //---------------------------------------------------------------------------
+  // ALINEAR Y REPARTIR.
+  //
+  // Se alinea contra el elemento PRINCIPAL (el que tiene los tiradores), no
+  // contra el borde del grupo. Es lo que hace que el resultado sea previsible:
+  // eliges el que ya esta bien puesto y los demas van a el.
+  //
+  // Se usa la caja EN PANTALLA (rectanguloLogico), no la x,y del diseño: asi un
+  // texto de ancho automatico o algo girado se centran por lo que se ve, que es
+  // lo que uno esta mirando cuando pulsa el boton.
+  //---------------------------------------------------------------------------
+  alinear(como) {
+    const grupo = this.elementosMarcados();
+    if (grupo.length < 2) return false;
+    const principal = grupo[0];
+    const ref = this.rectanguloLogico(principal);
+    this.op.antesDeCambiar?.("alinear:" + como);
+
+    for (const el of grupo) {
+      if (el === principal) continue;
+      const r = this.rectanguloLogico(el);
+      // El desfase entre la x del diseño y la caja pintada (el zoom o el margen
+      // del texto lo mueven), para devolver la correccion al sitio correcto.
+      const offX = M.num(el.x, 0) - r.x;
+      const offY = M.num(el.y, 0) - r.y;
+      switch (como) {
+        case "izquierda": el.x = Math.round(ref.x + offX); break;
+        case "derecha":   el.x = Math.round(ref.x + ref.w - r.w + offX); break;
+        case "centro_h":  el.x = Math.round(ref.x + (ref.w - r.w) / 2 + offX); break;
+        case "arriba":    el.y = Math.round(ref.y + offY); break;
+        case "abajo":     el.y = Math.round(ref.y + ref.h - r.h + offY); break;
+        case "centro_v":  el.y = Math.round(ref.y + (ref.h - r.h) / 2 + offY); break;
+      }
+    }
+    this.repintar();
+    this.op.alCambiar?.(principal, false);
+    return true;
+  }
+
+  // Repartir con el MISMO HUECO entre unos y otros. No es repartir los centros a
+  // distancias iguales: con elementos de tamaños distintos eso deja huecos
+  // desiguales, que es justo lo que se ve mal.
+  repartir(eje) {
+    const grupo = this.elementosMarcados();
+    if (grupo.length < 3) return false;
+    const conCaja = grupo.map(el => ({ el, r: this.rectanguloLogico(el) }));
+    const vertical = (eje === "vertical");
+    conCaja.sort((a, b) => (vertical ? a.r.y - b.r.y : a.r.x - b.r.x));
+
+    const primero = conCaja[0], ultimo = conCaja[conCaja.length - 1];
+    const desde = vertical ? primero.r.y : primero.r.x;
+    const hasta = vertical ? (ultimo.r.y + ultimo.r.h) : (ultimo.r.x + ultimo.r.w);
+    const ocupado = conCaja.reduce((s, c) => s + (vertical ? c.r.h : c.r.w), 0);
+    const hueco = (hasta - desde - ocupado) / (conCaja.length - 1);
+
+    this.op.antesDeCambiar?.("repartir:" + eje);
+    let cursor = desde;
+    for (const c of conCaja) {
+      if (vertical) {
+        const off = M.num(c.el.y, 0) - c.r.y;
+        c.el.y = Math.round(cursor + off);
+        cursor += c.r.h + hueco;
+      } else {
+        const off = M.num(c.el.x, 0) - c.r.x;
+        c.el.x = Math.round(cursor + off);
+        cursor += c.r.w + hueco;
+      }
+    }
+    this.repintar();
+    this.op.alCambiar?.(grupo[0], false);
     return true;
   }
 }

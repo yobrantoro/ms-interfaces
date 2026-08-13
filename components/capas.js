@@ -34,7 +34,12 @@ export class Capas {
   }
 
   fijarDiseno(diseno) { this.diseno = diseno; this.refrescar(); }
-  fijarSeleccion(id) { this.seleccion = id; this.refrescar(); }
+
+  fijarSeleccion(id, extra) {
+    this.seleccion = id;
+    this.extra = new Set(extra || []);
+    this.refrescar();
+  }
 
   // De delante a atras, que es como se lee una lista de capas.
   ordenados() {
@@ -57,11 +62,19 @@ export class Capas {
 
   filaCapa(el) {
     const elegida = el.id === this.seleccion;
+    // Los del grupo se marcan tambien aqui, mas suave. Es donde se ve de un
+    // vistazo cuantos hay cogidos, incluso los que quedan fuera de pantalla.
+    const enGrupo = !elegida && this.extra && this.extra.has(el.id);
     const fila = h("div", {
-      className: "ui-capa" + (elegida ? " elegida" : ""),
+      className: "ui-capa" + (elegida ? " elegida" : (enGrupo ? " en-grupo" : "")),
       draggable: "true",
       dataset: { id: el.id },
-      onClick: () => this.op.alSeleccionar?.(el.id),
+      // Ctrl o Shift añaden al grupo desde la lista, igual que en el lienzo: con
+      // veinte botones apilados es mas comodo marcarlos aqui que en el dibujo.
+      onClick: (e) => {
+        if (e.ctrlKey || e.shiftKey) this.op.alMarcar?.(el.id, "alternar");
+        else this.op.alSeleccionar?.(el.id);
+      },
       onDblclick: () => this.renombrar(el)
     });
 
@@ -160,9 +173,23 @@ export class Capas {
     this.op.antesDeCambiar?.();
     const antiguo = el.id;
     el.id = limpio;
-    // Si alguna accion abria por nombre... los ids no se referencian entre
-    // elementos, asi que no hay nada mas que arreglar. Se avisa por si acaso
-    // alguien lo usaba desde un script.
+
+    // SE ARRASTRAN LAS CONDICIONES QUE APUNTABAN A ESTE BOTON.
+    //
+    // Desde que existen las condiciones "cuando este elegido tal boton", los ids
+    // SI se referencian entre elementos. Renombrar sin actualizarlas dejaria
+    // condiciones apuntando a un boton que ya no existe, y eso no falla con un
+    // error: el elemento simplemente deja de aparecer, que es peor.
+    let arrastradas = 0;
+    for (const otro of (this.diseno.elementos || [])) {
+      const cond = otro.mostrar_si;
+      if (!cond || String(cond.dato || "") !== `{seleccion.${antiguo}}`) continue;
+      cond.dato = `{seleccion.${limpio}}`;
+      arrastradas++;
+    }
+    if (arrastradas > 0) {
+      this.op.avisar?.(`Renombrado, y ${arrastradas} condicion(es) que lo miraban se han actualizado`);
+    }
     this.op.alRenombrar?.(antiguo, limpio);
     this.op.alCambiar?.();
   }

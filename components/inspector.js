@@ -12,6 +12,11 @@ import { h, fila, campoNumero, campoTexto, desplegable, casilla, campoColor,
 import * as M from "../modelo.js";
 import * as G from "../graficos.js";
 import * as D from "../datos.js";
+import * as P from "../proyecto.js";
+
+// ¿La condicion esta negada? Se usa al cambiar de boton para no perder el
+// "cuando NO esta elegido" que ya estuviera puesto.
+const negado = (cond) => "no_es" in cond;
 
 export class Inspector {
   constructor(ctx, opciones) {
@@ -352,6 +357,27 @@ export class Inspector {
   // Es lo que convierte una lista repetida en algo util: pones seis fichas de
   // equipo y las de los huecos vacios se esconden solas.
   //---------------------------------------------------------------------------
+  //---------------------------------------------------------------------------
+  // MOSTRAR SOLO SI.
+  //
+  // POR QUE NO ES UN CAMPO DE TEXTO
+  //   Antes habia que escribir el dato a mano ("{interruptor.45}"). Alguien
+  //   probando el editor quiso que un texto siguiera a un boton, escribio
+  //   "seleccion.boton_1" dando por hecho que eso preguntaba por ese boton, y no
+  //   funciono. Su intuicion era razonable; el que estaba mal era el diseño.
+  //
+  //   Ahora se elige PRIMERO de que va la condicion y despues se rellena con
+  //   desplegables. Los cuatro casos que la gente pide de verdad:
+  //
+  //     boton        cuando este elegido tal boton   -> lista de los que hay
+  //     interruptor  un interruptor del juego        -> lista con sus NOMBRES
+  //     variable     una variable del juego          -> lista con sus NOMBRES
+  //     dato         cualquier otra cosa             -> lo de antes, a mano
+  //
+  //   Los interruptores y variables se enseñan como "0045: Derrotado Gim 4",
+  //   igual que la pestaña de condiciones de RPG Maker: es donde la gente ya
+  //   sabe leerlo.
+  //---------------------------------------------------------------------------
   pintarCondicion(el) {
     this.cuerpo.appendChild(titulillo("Mostrar solo si"));
     const tiene = !!el.mostrar_si;
@@ -367,7 +393,155 @@ export class Inspector {
 
     const cond = el.mostrar_si;
     const tocar = () => { this.op.antesDeCambiar?.("cond:" + el.id); this.op.alCambiar?.(); };
+    const clase = M.claseCondicion(cond);
 
+    this.cuerpo.appendChild(fila("De que va",
+      desplegable(clase, M.CLASES_CONDICION, (v) => {
+        if (v === clase) return;
+        this.op.antesDeCambiar?.();
+        // Se reescribe la condicion entera: mezclar restos de la anterior es lo
+        // que produce condiciones a medias que no se cumplen nunca.
+        el.mostrar_si = M.condicionNueva(v, this.primerBotonDe(el));
+        this.op.alCambiar?.();
+        this.refrescar();
+      })));
+
+    if (clase === "boton") this.condicionBoton(el, cond, tocar);
+    else if (clase === "interruptor" || clase === "variable") this.condicionInterruptor(el, cond, tocar, clase);
+    else this.condicionDato(el, cond, tocar);
+
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "En el juego: " + M.resumenCondicion(cond) + ". Un elemento escondido tampoco se puede pulsar ni elegir con las flechas. Si la condicion esta mal escrita el elemento SE VE, para que no desaparezca en silencio." }));
+  }
+
+  // Los botones de esta pantalla, para poder elegirlos por nombre.
+  botonesDelDiseno() {
+    return (this.diseno?.elementos || []).filter(e => e.tipo === "boton");
+  }
+
+  primerBotonDe(el) {
+    const otros = this.botonesDelDiseno().filter(b => b.id !== el.id);
+    return (otros[0] || this.botonesDelDiseno()[0] || {}).id || "";
+  }
+
+  //---------------------------------------------------------------------------
+  // "Cuando este elegido tal boton".
+  //
+  // Se escribe como {seleccion.<id>} comparado con 1, que el motor entiende como
+  // "¿es ese el elegido?". En una lista repetida se ofrece ademas la opcion
+  // "el mio", que usa {n} y hace que cada copia pregunte por si misma: es lo que
+  // permite que la ficha elegida de un equipo se vea distinta.
+  //---------------------------------------------------------------------------
+  condicionBoton(el, cond, tocar) {
+    // "{seleccion}" a secas tambien es el modo copia: es lo que se guarda al
+    // elegir "el de esta misma copia", y antes de expandir la lista todavia no
+    // lleva {n} dentro.
+    const esElMio = String(cond.dato || "").includes("{n}") ||
+                    /^\{?seleccion\}?$/.test(String(cond.dato || ""));
+    const opciones = [];
+    if (el.repetir) opciones.push({ valor: "@mio", texto: "el de esta misma copia" });
+    // Se enseña el TEXTO del boton junto a su nombre: en una pantalla con
+    // boton_1..boton_6 los ids no dicen nada, y el texto si ("Mochila", "Cerrar").
+    for (const b of this.botonesDelDiseno()) {
+      const rotulo = String(b.texto || "").trim();
+      opciones.push({ valor: b.id, texto: rotulo ? `${b.id} — ${rotulo}` : b.id });
+    }
+
+    if (!opciones.length) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Esta pantalla todavia no tiene ningun boton. Añade uno y podras elegirlo aqui." }));
+      return;
+    }
+
+    const actual = esElMio ? "@mio" : String(cond.dato || "").replace(/^\{seleccion\.?|\}$/g, "");
+    this.cuerpo.appendChild(fila("El boton",
+      desplegable(opciones.some(o => o.valor === actual) ? actual : opciones[0].valor, opciones, (v) => {
+        this.op.antesDeCambiar?.();
+        // Se mira si estaba negada ANTES de borrar los comparadores. Al reves
+        // (mirarlo despues) siempre daria false, y cambiar de boton le daba la
+        // vuelta a un "cuando NO esta elegido" que ya estuviera puesto.
+        const neg = negado(cond);
+        delete cond.es;
+        delete cond.no_es;
+        cond.dato = (v === "@mio") ? "{seleccion}" : ("{seleccion." + v + "}");
+        cond[neg ? "no_es" : "es"] = (v === "@mio") ? "{n}" : 1;
+        this.op.alCambiar?.();
+        this.refrescar();
+      })));
+
+    // Cuando NO esta elegido es igual de util: es como se hace la version
+    // "apagada" de una ficha, la que se ve mientras el cursor esta en otra.
+    const neg = "no_es" in cond;
+    this.cuerpo.appendChild(fila("Se ve cuando",
+      desplegable(neg ? "no" : "si",
+        [{ valor: "si", texto: "SI esta elegido" }, { valor: "no", texto: "NO esta elegido" }],
+        (v) => {
+          this.op.antesDeCambiar?.();
+          const valor = esElMio ? "{n}" : 1;
+          delete cond.es; delete cond.no_es;
+          cond[(v === "no") ? "no_es" : "es"] = valor;
+          this.op.alCambiar?.();
+          this.refrescar();
+        })));
+
+    if (el.repetir && !esElMio) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Este elemento se repite. Si querias que cada copia mire SU boton, elige \"el de esta misma copia\"." }));
+    }
+  }
+
+  //---------------------------------------------------------------------------
+  // Un interruptor o una variable del juego, elegidos por nombre.
+  //---------------------------------------------------------------------------
+  condicionInterruptor(el, cond, tocar, clase) {
+    const raiz = (clase === "variable") ? "variable" : "interruptor";
+    const num = String(cond.dato || "").replace(/[^0-9]/g, "") || "1";
+
+    this.cuerpo.appendChild(fila(clase === "variable" ? "La variable" : "El interruptor",
+      desplegable(num, P.opciones(clase, num), (v) => {
+        cond.dato = "{" + raiz + "." + v + "}";
+        tocar();
+        this.refrescar();
+      })));
+
+    if (clase === "interruptor") {
+      // Un interruptor solo puede estar de dos maneras, asi que preguntar por
+      // comparadores y valores seria ruido: el motor devuelve 1 o 0.
+      const enc = !(("es" in cond) && M.num(cond.es, 1) === 0);
+      this.cuerpo.appendChild(fila("Se ve cuando",
+        desplegable(enc ? "on" : "off",
+          [{ valor: "on", texto: "esta ACTIVADO" }, { valor: "off", texto: "esta apagado" }],
+          (v) => {
+            this.op.antesDeCambiar?.();
+            for (const c of M.COMPARADORES) delete cond[c.valor];
+            cond.es = (v === "on") ? 1 : 0;
+            this.op.alCambiar?.();
+            this.refrescar();
+          })));
+      if (!P.hayNombres()) {
+        this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+          textContent: "Tu version del editor no me da los nombres de los interruptores, asi que solo salen los numeros." }));
+      }
+      return;
+    }
+
+    const comp = M.comparadorDe(cond) || "es";
+    this.cuerpo.appendChild(fila("Que", desplegable(comp, M.COMPARADORES.filter(c => c.valor !== "existe"), (v) => {
+      this.op.antesDeCambiar?.();
+      for (const c of M.COMPARADORES) delete cond[c.valor];
+      cond[v] = 0;
+      this.op.alCambiar?.();
+      this.refrescar();
+    })));
+    this.cuerpo.appendChild(fila("A",
+      campoNumero(M.num(cond[comp], 0), (v) => { cond[comp] = Math.round(v || 0); tocar(); })));
+  }
+
+  //---------------------------------------------------------------------------
+  // Cualquier otro dato, a mano. Es la valvula de escape para lo que no cabe en
+  // los tres casos de arriba.
+  //---------------------------------------------------------------------------
+  condicionDato(el, cond, tocar) {
     const entrada = campoTexto(cond.dato, (v) => { cond.dato = v; tocar(); }, "{equipo.1.nombre}");
     const btn = boton("Datos...", async () => {
       const d = await this.elegirDato();
@@ -382,7 +556,6 @@ export class Inspector {
     const comp = M.comparadorDe(cond) || "es";
     this.cuerpo.appendChild(fila("Que", desplegable(comp, M.COMPARADORES, (v) => {
       this.op.antesDeCambiar?.();
-      // Solo un comparador a la vez: se quitan los demas.
       for (const c of M.COMPARADORES) delete cond[c.valor];
       cond[v] = (v === "existe") ? true : "";
       this.op.alCambiar?.();
@@ -400,9 +573,6 @@ export class Inspector {
       this.cuerpo.appendChild(fila("A", campoTexto(String(cond[comp] == null ? "" : cond[comp]),
         (v) => { const n = parseFloat(v); cond[comp] = (v !== "" && !isNaN(n) && String(n) === v.trim()) ? n : v; tocar(); }, "1")));
     }
-
-    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
-      textContent: "En el juego: " + M.resumenCondicion(cond) + ". Un boton escondido tampoco se puede pulsar ni elegir con las flechas. Si la condicion esta mal escrita el elemento SE VE, para que no desaparezca en silencio." }));
   }
 
   pintarAspecto(el) {
@@ -757,6 +927,25 @@ export class Inspector {
     ));
     this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
       textContent: "Dejalo en auto y las flechas van al boton mas cercano en esa direccion, que suele ser lo que uno espera. Ponle numero solo si quieres mandar tu sobre el recorrido." }));
+
+    // TECLA DE ACCESO RAPIDO. Es lo que hace la gente en los menus de pausa: la D
+    // abre el mapa desde cualquier sitio, sin recorrer la lista con las flechas.
+    this.cuerpo.appendChild(fila("Tecla rapida",
+      desplegable(el.tecla || "",
+        [{ valor: "", texto: "(ninguna)" }, ...M.TECLAS.filter(t => t).map(t => ({ valor: t, texto: t }))],
+        (v) => this.fijar(el, "tecla", v || null))));
+    const otros = (this.diseno?.elementos || [])
+      .filter(e => e !== el && e.tipo === "boton" && e.tecla && el.tecla && e.tecla === el.tecla)
+      .map(e => e.id);
+    if (otros.length) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda", style: { color: "var(--danger, #e05c48)" },
+        textContent: `La tecla ${el.tecla} tambien la tiene "${otros.join('", "')}". Solo respondera uno.` }));
+    } else {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: el.tecla
+          ? `Pulsar ${el.tecla} dentro de esta pantalla dispara este boton desde donde sea. Si una condicion lo esconde, la tecla tampoco funciona.`
+          : "Con una tecla puesta, este boton se puede pulsar sin ir hasta el con las flechas. Util para accesos rapidos en un menu de pausa." }));
+    }
     this.pintarAccion(el);
   }
 
@@ -823,8 +1012,10 @@ export class Inspector {
         break;
       }
       case "interruptor":
+        // Por nombre, igual que en las condiciones: "0045: Derrotado Gim 4".
         this.cuerpo.appendChild(fila("Interruptor",
-          campoNumero(accion.numero, (v) => { accion.numero = v == null ? null : Math.round(v); this.op.alCambiar?.(); }, { min: 1 })));
+          desplegable(String(accion.numero || 1), P.opciones("interruptor", accion.numero),
+            (v) => { accion.numero = parseInt(v, 10); this.op.alCambiar?.(); this.refrescar(); })));
         this.cuerpo.appendChild(fila("Ponerlo a",
           desplegable(String(accion.valor == null ? "true" : accion.valor),
             [{ valor: "true", texto: "Activado" }, { valor: "false", texto: "Desactivado" }, { valor: "cambiar", texto: "Al contrario de como este" }],
@@ -832,7 +1023,8 @@ export class Inspector {
         break;
       case "variable":
         this.cuerpo.appendChild(fila("Variable",
-          campoNumero(accion.numero, (v) => { accion.numero = v == null ? null : Math.round(v); this.op.alCambiar?.(); }, { min: 1 })));
+          desplegable(String(accion.numero || 1), P.opciones("variable", accion.numero),
+            (v) => { accion.numero = parseInt(v, 10); this.op.alCambiar?.(); this.refrescar(); })));
         this.cuerpo.appendChild(fila("Operacion",
           desplegable(accion.operacion || "poner",
             [{ valor: "poner", texto: "Poner este valor" }, { valor: "sumar", texto: "Sumarle este valor" }],

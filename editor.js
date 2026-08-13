@@ -15,6 +15,7 @@ import { h, boton, casilla } from "./components/dom.js";
 import { CSS } from "./estilo.js";
 import * as M from "./modelo.js";
 import * as G from "./graficos.js";
+import * as P from "./proyecto.js";
 import { Lienzo } from "./components/lienzo.js";
 import { Capas } from "./components/capas.js";
 import { Inspector } from "./components/inspector.js";
@@ -37,11 +38,15 @@ export class EditorInterfaces {
     this.nombre = null;
     this.sucio = false;
     this.seleccion = null;
+    this.extra = new Set();       // los demas marcados del grupo
     this.disponibles = [];
     this.deshacerPila = [];
     this.rehacerPila = [];
 
     G.configurar(ctx);
+    // Los nombres de los interruptores y variables del proyecto, para poder
+    // elegirlos de una lista en vez de escribir numeros a ciegas.
+    P.configurar(ctx);
     this.construir();
     this.conectarTeclado();
     this.arrancar();
@@ -82,6 +87,30 @@ export class EditorInterfaces {
       boton("Borrar (Supr)", () => this.borrarElemento(), "peligro")
     );
 
+    // BARRA DE ALINEAR. Solo aparece con varios marcados: enseñarla siempre
+    // apagada seria ruido permanente en la pantalla.
+    //
+    // Se alinea contra el elemento PRINCIPAL, el que lleva los tiradores, y se
+    // dice en la propia barra para que no haya que adivinar la referencia.
+    this.etiquetaGrupo = h("span", { className: "ui-capa-tipo", textContent: "" });
+    this.botonesRepartir = [
+      boton("Repartir en fila", () => this.repartir("horizontal")),
+      boton("Repartir en columna", () => this.repartir("vertical"))
+    ];
+    this.barraGrupo = h("div", { className: "ui-barra", style: { display: "none" } },
+      this.etiquetaGrupo,
+      h("span", { className: "ui-capa-tipo", textContent: "· alinear al de tiradores:" }),
+      boton("Izq", () => this.alinear("izquierda")),
+      boton("Centro", () => this.alinear("centro_h")),
+      boton("Der", () => this.alinear("derecha")),
+      boton("Arriba", () => this.alinear("arriba")),
+      boton("Medio", () => this.alinear("centro_v")),
+      boton("Abajo", () => this.alinear("abajo")),
+      h("span", { className: "ui-barra-hueco" }),
+      ...this.botonesRepartir,
+      boton("Quitar seleccion", () => this.seleccionar(null))
+    );
+
     // --- piezas ---
     // El motivo agrupa pulsaciones seguidas de la MISMA operacion. Sin el, editar
     // un campo y arrastrar otro elemento medio segundo despues se fundian en un
@@ -91,6 +120,8 @@ export class EditorInterfaces {
     this.lienzo = new Lienzo({
       antesDeCambiar,
       alSeleccionar: (id) => this.seleccionar(id),
+      alMarcar: (id, como) => this.marcar(id, como),
+      alMarcarVarios: (ids, sumar) => this.marcarVarios(ids, sumar),
       alCambiar: (_el, arrastrando) => {
         // Mientras se arrastra solo se marca sucio y se repinta; el trabajo de
         // refrescar listas se deja para cuando se suelte, que si no va a tirones.
@@ -108,6 +139,7 @@ export class EditorInterfaces {
     this.capas = new Capas({
       antesDeCambiar,
       alSeleccionar: (id) => this.seleccionar(id),
+      alMarcar: (id, como) => this.marcar(id, como),
       alCambiar: () => { this.marcarSucio(); this.refrescarTodo(); },
       pedirTexto: (titulo, valor) => this.pedirTexto(titulo, valor),
       avisar: (m) => this.toast(m, "warning")
@@ -149,7 +181,7 @@ export class EditorInterfaces {
     this.centro = h("div", { className: "ui-centro" }, this.lienzo.el, this.pie);
     this.cuerpo = h("div", { className: "ui-cuerpo" }, this.capas.el, this.centro, this.inspector.el);
 
-    this.raiz = h("div", { className: "ui-raiz" }, this.barra, this.barraAnadir, this.cuerpo, this.tiempo.el);
+    this.raiz = h("div", { className: "ui-raiz" }, this.barra, this.barraAnadir, this.barraGrupo, this.cuerpo, this.tiempo.el);
     this.host.appendChild(this.raiz);
   }
 
@@ -331,24 +363,95 @@ export class EditorInterfaces {
   }
 
   refrescarTodo() {
+    // Se limpia el grupo de ids que ya no existen (borrados, renombrados, o
+    // cargando otro diseño). Si no, alinear intentaria mover fantasmas.
+    const vivos = new Set((this.diseno?.elementos || []).map(e => e.id));
+    this.extra = new Set([...(this.extra || [])].filter(id => vivos.has(id)));
+    if (this.seleccion && !vivos.has(this.seleccion)) this.seleccion = null;
+    if (this.seleccion) this.extra.add(this.seleccion);
+
     this.lienzo.fijarDiseno(this.diseno);
-    this.lienzo.fijarSeleccion(this.seleccion);
+    this.lienzo.fijarSeleccion(this.seleccion, this.extra);
     this.capas.fijarDiseno(this.diseno);
-    this.capas.fijarSeleccion(this.seleccion);
+    this.capas.fijarSeleccion(this.seleccion, this.extra);
     this.inspector.fijarDiseno(this.diseno);
     this.inspector.fijarSeleccion(this.seleccion);
     this.tiempo.fijarDiseno(this.diseno);
     this.tiempo.fijarSeleccion(this.seleccion);
     this.pintarSucio();
     this.pintarAvisos();
+    this.pintarGrupo();
   }
 
+  //---------------------------------------------------------------------------
+  // SELECCION, SIMPLE Y DE GRUPO.
+  //
+  // "seleccion" es el elemento principal (el que edita el inspector) y "extra"
+  // son los demas del grupo. El inspector siempre enseña UNO: enseñar campos de
+  // seis elementos a la vez pide decidir que pasa cuando no coinciden, y eso es
+  // mas complicado de usar que util.
+  //---------------------------------------------------------------------------
   seleccionar(id) {
     this.seleccion = id;
-    this.lienzo.fijarSeleccion(id);
-    this.capas.fijarSeleccion(id);
+    this.extra = new Set(id ? [id] : []);
+    this.refrescarSeleccion();
+  }
+
+  // como: "alternar" (Ctrl-clic) o "principal" (pasa a ser el que se edita).
+  marcar(id, como) {
+    if (!id) return;
+    this.extra = this.extra || new Set();
+    if (como === "principal") {
+      this.extra.add(id);
+      this.seleccion = id;
+    } else if (this.extra.has(id) && this.extra.size > 1) {
+      this.extra.delete(id);
+      if (this.seleccion === id) this.seleccion = [...this.extra][0] || null;
+    } else {
+      this.extra.add(id);
+      if (!this.seleccion) this.seleccion = id;
+    }
+    this.refrescarSeleccion();
+  }
+
+  marcarVarios(ids, sumar) {
+    this.extra = new Set(sumar ? [...(this.extra || [])] : []);
+    for (const id of ids) this.extra.add(id);
+    // El principal se conserva si sigue en el grupo, y si no manda el primero
+    // que se haya cogido: asi alinear tiene una referencia estable.
+    if (!this.seleccion || !this.extra.has(this.seleccion)) this.seleccion = [...this.extra][0] || null;
+    this.refrescarSeleccion();
+  }
+
+  refrescarSeleccion() {
+    const id = this.seleccion;
+    this.lienzo.fijarSeleccion(id, this.extra);
+    this.capas.fijarSeleccion(id, this.extra);
     this.inspector.fijarSeleccion(id);
     this.tiempo.fijarSeleccion(id);
+    this.pintarGrupo();
+  }
+
+  alinear(como) {
+    if (!this.lienzo.alinear(como)) { this.toast("Marca al menos dos elementos", "warning"); return; }
+    this.marcarSucio();
+    this.inspector.refrescar();
+  }
+
+  repartir(eje) {
+    if (!this.lienzo.repartir(eje)) { this.toast("Para repartir hacen falta tres o mas", "warning"); return; }
+    this.marcarSucio();
+    this.inspector.refrescar();
+  }
+
+  // Cuantos hay marcados y los botones de alinear, que solo tienen sentido con
+  // varios: enseñarlos siempre apagados seria ruido permanente.
+  pintarGrupo() {
+    if (!this.barraGrupo) return;
+    const n = (this.extra || new Set()).size;
+    this.barraGrupo.style.display = (n > 1) ? "" : "none";
+    if (this.etiquetaGrupo) this.etiquetaGrupo.textContent = `${n} elegidos`;
+    for (const b of (this.botonesRepartir || [])) b.disabled = (n < 3);
   }
 
   //---------------------------------------------------------------------------
@@ -462,30 +565,45 @@ export class EditorInterfaces {
     this.toast(`Elige la imagen en "Fichero". Tiene que medir ${M.LIENZO_ANCHO}x${M.LIENZO_ALTO} para cubrir la pantalla entera.`, "info");
   }
 
+  // Duplica todo el grupo, y las copias quedan marcadas: asi se puede duplicar
+  // una fila de botones y arrastrarla entera al sitio, que es para lo que se
+  // duplica un grupo.
   duplicarElemento() {
-    const el = this.elementoElegido();
-    if (!el) return;
+    const origen = (this.extra && this.extra.size)
+      ? this.diseno.elementos.filter(e => this.extra.has(e.id))
+      : [this.elementoElegido()].filter(Boolean);
+    if (!origen.length) return;
     this.apuntarDeshacer();
-    const copia = JSON.parse(JSON.stringify(el));
-    copia.id = M.idLibre(this.diseno, el.id.replace(/_\d+$/, ""));
-    copia.x = M.num(copia.x, 0) + 8;
-    copia.y = M.num(copia.y, 0) + 8;
     // Por encima de TODO lo que haya, no +1 sobre el original: si el elemento de
     // al lado ya estaba en esa capa, la copia aparecia por detras de el, que es lo
     // contrario de lo que uno espera al duplicar.
-    copia.capa = this.diseno.elementos.reduce((m, e) => Math.max(m, M.num(e.capa, 0)), 0) + 10;
-    this.diseno.elementos.push(copia);
+    let capa = this.diseno.elementos.reduce((m, e) => Math.max(m, M.num(e.capa, 0)), 0) + 10;
+    const nuevos = [];
+    for (const el of origen) {
+      const copia = JSON.parse(JSON.stringify(el));
+      copia.id = M.idLibre(this.diseno, el.id.replace(/_\d+$/, ""));
+      copia.x = M.num(copia.x, 0) + 8;
+      copia.y = M.num(copia.y, 0) + 8;
+      copia.capa = capa;
+      capa += 10;
+      this.diseno.elementos.push(copia);
+      nuevos.push(copia.id);
+    }
     this.marcarSucio();
-    this.seleccion = copia.id;
+    this.seleccion = nuevos[0];
+    this.extra = new Set(nuevos);
     this.refrescarTodo();
   }
 
+  // Borra TODO el grupo, no solo el principal: si has marcado seis y le das a
+  // Supr, esperas que se vayan los seis. Va en un solo paso de deshacer.
   borrarElemento() {
-    const el = this.elementoElegido();
-    if (!el) return;
+    const ids = new Set(this.extra && this.extra.size ? [...this.extra] : (this.seleccion ? [this.seleccion] : []));
+    if (!ids.size) return;
     this.apuntarDeshacer();
-    this.diseno.elementos = this.diseno.elementos.filter(e => e !== el);
+    this.diseno.elementos = this.diseno.elementos.filter(e => !ids.has(e.id));
     this.seleccion = null;
+    this.extra = new Set();
     this.marcarSucio();
     this.refrescarTodo();
   }

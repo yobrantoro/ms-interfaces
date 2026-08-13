@@ -125,6 +125,45 @@ export const COMPARADORES = [
   { valor: "existe",        texto: "existe (no esta vacio)" }
 ];
 
+//=============================================================================
+// DE QUE VA UNA CONDICION.
+//
+// El fichero solo guarda un dato y un comparador, que es lo justo para el motor.
+// Pero para EDITARLA hace falta saber de que trata, porque cada caso se rellena
+// distinto: un interruptor solo esta encendido o apagado, un boton se elige de
+// una lista, una variable pide un numero.
+//
+// Se deduce del propio dato en vez de guardar un campo extra en el fichero. Asi
+// una condicion escrita a mano (o por una version anterior) se sigue editando
+// bien, y el .json no engorda con informacion que solo le sirve al editor.
+//=============================================================================
+export const CLASES_CONDICION = [
+  { valor: "boton",       texto: "Cuando este elegido un boton" },
+  { valor: "interruptor", texto: "Un interruptor del juego" },
+  { valor: "variable",    texto: "Una variable del juego" },
+  { valor: "dato",        texto: "Otro dato del juego (a mano)" }
+];
+
+export function claseCondicion(cond) {
+  const d = String((cond && cond.dato) || "");
+  if (/^\{?seleccion/.test(d)) return "boton";
+  if (/^\{?interruptor\./.test(d)) return "interruptor";
+  if (/^\{?variable\./.test(d)) return "variable";
+  return "dato";
+}
+
+// Una condicion recien elegida, ya rellena con algo que se cumple de verdad. Una
+// condicion a medias (sin comparador, o sin dato) es la que no se cumple nunca y
+// deja a alguien mirando una pantalla vacia sin saber por que.
+export function condicionNueva(clase, idBoton) {
+  switch (clase) {
+    case "boton":       return { dato: "{seleccion." + (idBoton || "boton") + "}", es: 1 };
+    case "interruptor": return { dato: "{interruptor.1}", es: 1 };
+    case "variable":    return { dato: "{variable.1}", mayor_o_igual: 1 };
+    default:            return { dato: "{equipo.1.nombre}", existe: true };
+  }
+}
+
 // Que comparador usa una condicion, o null si ninguno.
 export function comparadorDe(cond) {
   if (!cond || typeof cond !== "object") return null;
@@ -133,14 +172,86 @@ export function comparadorDe(cond) {
 }
 
 // Como se lee una condicion en cristiano, para la lista de capas y el inspector.
+//
+// Se traducen los tres casos comunes a lenguaje normal en vez de enseñar el dato
+// crudo: "si el interruptor 45 esta activado" se entiende, "si interruptor.45 es
+// igual a 1" hay que descifrarlo.
 export function resumenCondicion(cond) {
   if (!cond) return "";
   const c = comparadorDe(cond);
   if (!c) return "condicion sin terminar";
   const dato = String(cond.dato || "?").replace(/^{|}$/g, "");
+
+  const clase = claseCondicion(cond);
+  if (clase === "boton") {
+    const cual = dato.replace(/^seleccion\.?/, "");
+    const quien = cual ? `"${cual}"` : "el mismo";
+    const negada = (c === "no_es");
+    if (!cual) {
+      // {seleccion} comparado con {n}: cada copia mira su propia seleccion.
+      return negada ? "cuando NO esta elegida esta copia" : "cuando esta elegida esta copia";
+    }
+    return negada ? `cuando ${quien} NO esta elegido` : `cuando ${quien} esta elegido`;
+  }
+  if (clase === "interruptor") {
+    const n = dato.replace(/[^0-9]/g, "");
+    const apagado = (c === "es") && num(cond.es, 1) === 0;
+    return `si el interruptor ${n} esta ${apagado ? "apagado" : "activado"}`;
+  }
+  if (clase === "variable") {
+    const n = dato.replace(/[^0-9]/g, "");
+    const texto = (COMPARADORES.find(x => x.valor === c) || {}).texto || c;
+    return `si la variable ${n} ${texto} ${cond[c]}`;
+  }
+
   if (c === "existe") return cond.existe ? `si ${dato} existe` : `si ${dato} NO existe`;
   const texto = (COMPARADORES.find(x => x.valor === c) || {}).texto || c;
   return `si ${dato} ${texto} ${cond[c]}`;
+}
+
+// Lo que se ve cuando un dato no se puede saber. Igual que Datos::HUECO en Ruby.
+export const HUECO = "---";
+
+//-----------------------------------------------------------------------------
+// ¿SE CUMPLE ESTA CONDICION? Espejo de Datos.cumple? en [007] Datos.rb.
+//
+// Vive aqui para que la use tanto el lienzo del editor como la vista previa de
+// tools/ver-interfaz.mjs, y sobre todo para que se pueda probar: si el editor y
+// el juego no esconden lo mismo, el editor enseña cosas que en el juego no
+// estan, que es justo el fallo que se arreglo escribiendo esto.
+//
+// "valorDeDato" recibe la clave ya sin llaves y devuelve el valor en texto.
+//-----------------------------------------------------------------------------
+export function cumpleCondicion(cond, valorDeDato) {
+  if (!cond || typeof cond !== "object") return true;
+  const clave = String(cond.dato == null ? "" : cond.dato).trim().replace(/^\{|\}$/g, "");
+  if (!clave) return true;
+  const izq = valorDeDato ? valorDeDato(clave) : HUECO;
+
+  // "existe" es el unico que mira el hueco: todo lo demas compara valores.
+  if ("existe" in cond) {
+    const hay = !(izq == null || izq === HUECO || String(izq) === "");
+    return cond.existe ? hay : !hay;
+  }
+
+  const c = comparadorDe(cond);
+  if (!c) return true;
+  const der = cond[c];
+  // Si los dos lados parecen numeros se comparan como numeros; si no, como
+  // texto. Asi "3" y 3 son lo mismo, que es lo que espera cualquiera.
+  const a = parseFloat(izq), b = parseFloat(der);
+  const numeros = Number.isFinite(a) && Number.isFinite(b) &&
+                  String(izq).trim() !== "" && String(der).trim() !== "";
+  switch (c) {
+    case "es":            return numeros ? a === b : String(izq) === String(der);
+    case "no_es":         return numeros ? a !== b : String(izq) !== String(der);
+    case "mayor_que":     return numeros && a > b;
+    case "menor_que":     return numeros && a < b;
+    case "mayor_o_igual": return numeros && a >= b;
+    case "menor_o_igual": return numeros && a <= b;
+    case "contiene":      return String(izq).includes(String(der));
+  }
+  return true;
 }
 
 export const NOMBRE_PROPIEDAD = {
@@ -387,6 +498,7 @@ export function expandirRepeticiones(diseno, valorDeDato) {
       const copia = sustituirN({ ...JSON.parse(JSON.stringify(el)) }, i);
       copia.id = el.id + "_" + i;
       copia._origen = el.id;
+      copia._copia = i;                 // igual que en Ruby: lo usa {seleccion}
       copia.x = num(el.x, 0) + dx * col + saltoFilaX * fila;
       copia.y = num(el.y, 0) + (porFila > 0 ? 0 : dy * col) + saltoFilaY * fila;
       delete copia.repetir;
@@ -582,7 +694,7 @@ const ORDEN = ["id", "tipo", "repetir", "capa", "x", "y", "ancho", "alto",
   "opacidad", "zoom", "angulo", "visible", "sonido",
   "escala_encima", "escala_pulsado",
   "mostrar_si",
-  "orden_teclado", "sigue_seleccion", "cursor_x", "cursor_y",
+  "orden_teclado", "tecla", "sigue_seleccion", "cursor_x", "cursor_y",
   "accion", "entrada", "animaciones"];
 
 function ordenarClaves(el) {
@@ -682,6 +794,22 @@ export function revisar(diseno, otros = []) {
     }
   }
 
+  // Dos botones con la misma tecla rapida: solo respondera uno, y desde el
+  // editor eso se ve como "esta tecla no hace nada".
+  const porTecla = new Map();
+  for (const el of diseno.elementos || []) {
+    if (el.tipo !== "boton" || !el.tecla) continue;
+    const t = String(el.tecla).toUpperCase();
+    if (porTecla.has(t)) {
+      avisos.push(`La tecla ${t} la tienen "${porTecla.get(t)}" y "${el.id}": solo funcionara uno`);
+    } else {
+      porTecla.set(t, el.id);
+    }
+    if (TECLAS_PROHIBIDAS.includes(t)) {
+      avisos.push(`La tecla ${t} de "${el.id}" ya la usa el juego: elige otra`);
+    }
+  }
+
   (diseno.elementos || []).forEach((el, i) => {
     const donde = el.id || `elemento ${i + 1}`;
     if (!el.id) avisos.push(`El elemento ${i + 1} no tiene nombre`);
@@ -705,6 +833,16 @@ export function revisar(diseno, otros = []) {
       else {
         if (!el.mostrar_si.dato) avisos.push(`"${donde}" tiene una condicion que no dice que dato mira`);
         if (!comparadorDe(el.mostrar_si)) avisos.push(`"${donde}" tiene una condicion sin comparacion`);
+        // Una condicion que mira un boton que ya no existe NO da error en el
+        // juego: el elemento deja de aparecer y punto. Hay que cazarlo aqui o se
+        // convierte en media hora buscando por que algo no sale.
+        const m = String(el.mostrar_si.dato || "").match(/^\{seleccion\.([^}]+)\}$/);
+        if (m && m[1] !== "id" && !m[1].includes("{n}")) {
+          const existe = (diseno.elementos || []).some(e => e.id === m[1] && e.tipo === "boton");
+          if (!existe) {
+            avisos.push(`"${donde}" se ve solo cuando este elegido "${m[1]}", y no hay ningun boton con ese nombre`);
+          }
+        }
       }
     }
     for (const p of el.animaciones || []) {
