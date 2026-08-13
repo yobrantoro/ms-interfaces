@@ -164,8 +164,8 @@ Se configura en el propio editor, con casillas. Cuatro maneras:
 
 ### Reemplazar una pantalla del juego
 
-Las siete pantallas de Essentials (mochila, equipo, pokedex, guardar, ficha, mapa,
-pokegear) tienen su propio interruptor. La regla es una sola:
+Las ocho pantallas de Essentials (mochila, equipo, pokedex, guardar, ficha, mapa,
+pokegear y opciones) tienen su propio interruptor. La regla es una sola:
 
 > **Manda la pantalla tuya si existe, y si no, la del juego.**
 

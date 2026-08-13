@@ -98,6 +98,7 @@ export const ACCIONES = [
   { valor: "abrir_ficha",    texto: "Abrir la ficha de entrenador" },
   { valor: "abrir_mapa",     texto: "Abrir el mapa de la region" },
   { valor: "abrir_pokegear", texto: "Abrir el Pokegear" },
+  { valor: "abrir_opciones", texto: "Abrir las Opciones" },
   { valor: "interruptor",    texto: "Cambiar un interruptor" },
   { valor: "variable",       texto: "Cambiar una variable" },
   { valor: "sonido",         texto: "Sonar un efecto" },
@@ -630,7 +631,8 @@ export const INTEGRADAS = {
   guardar:  { titulo: "Guardar partida",     contenido: "los huecos de guardado" },
   ficha:    { titulo: "Ficha de entrenador", contenido: "tus datos y medallas" },
   mapa:     { titulo: "Mapa de la region",   contenido: "el mapa y los pueblos" },
-  pokegear: { titulo: "Pokegear",            contenido: "el telefono y la radio" }
+  pokegear: { titulo: "Pokegear",            contenido: "el telefono y la radio" },
+  opciones: { titulo: "Opciones",            contenido: "la lista de ajustes" }
 };
 
 export function aperturas(diseno) {
