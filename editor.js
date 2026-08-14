@@ -169,13 +169,29 @@ export class EditorInterfaces {
     for (const z of [1, 2, 3, 4]) this.selZoom.appendChild(h("option", { value: z, textContent: `x${z}`, selected: z === 2 }));
     this.selZoom.addEventListener("change", () => this.lienzo.fijarZoom(Number(this.selZoom.value)));
 
+    // QUE BOTON SE DA POR ELEGIDO AL DIBUJAR.
+    //
+    // Una pantalla suele llevar un elemento por cada opcion ("este texto se ve
+    // cuando esta elegido el boton 3"). Con un solo elegido posible, los de los
+    // demas botones no se podrian ver NUNCA aqui. Con esto se recorren los estados
+    // uno a uno, igual que la linea de tiempo recorre una animacion.
+    this.selElegido = h("select", { className: "ui-sel", style: { width: "auto", maxWidth: "160px" } });
+    this.selElegido.addEventListener("change", () => {
+      this.lienzo.fijarSimulaElegido(this.selElegido.value || null);
+    });
+
     this.pie = h("div", { className: "ui-pie-lienzo" },
       h("span", { textContent: `Lienzo ${M.LIENZO_ANCHO}x${M.LIENZO_ALTO}` }),
       h("span", { className: "ui-barra-hueco" }),
       this.coords,
+      h("span", { textContent: "Elegido" }), this.selElegido,
       h("span", { textContent: "Zoom" }), this.selZoom,
       casilla(true, (v) => this.lienzo.fijarRejilla(v), "rejilla"),
-      casilla(true, (v) => this.lienzo.fijarImantar(v), "imantar")
+      casilla(true, (v) => this.lienzo.fijarImantar(v), "imantar"),
+      // Los que una condicion esconde, en fantasma. Encendido por defecto: perder
+      // un elemento de vista sin saber donde esta es mucho peor que verlo a
+      // medias, y asi se puede seguir colocando.
+      casilla(true, (v) => this.lienzo.fijarVerEscondidos(v), "ver escondidos")
     );
 
     this.centro = h("div", { className: "ui-centro" }, this.lienzo.el, this.pie);
@@ -381,6 +397,34 @@ export class EditorInterfaces {
     this.pintarSucio();
     this.pintarAvisos();
     this.pintarGrupo();
+    this.pintarElegidos();
+  }
+
+  //---------------------------------------------------------------------------
+  // La lista de "que boton se da por elegido".
+  //
+  // Se rehace con el diseño porque los botones se añaden, se borran y se
+  // renombran: una lista que se quedara con nombres viejos simularia un boton que
+  // ya no existe y el lienzo dejaria de cuadrar con el juego sin decir nada.
+  //---------------------------------------------------------------------------
+  pintarElegidos() {
+    if (!this.selElegido) return;
+    const botones = (this.diseno?.elementos || []).filter(e => e.tipo === "boton");
+    const antes = this.selElegido.value;
+    this.selElegido.textContent = "";
+    this.selElegido.appendChild(h("option", { value: "", textContent: "el de salida" }));
+    for (const b of botones) {
+      const rotulo = String(b.texto || "").trim();
+      this.selElegido.appendChild(h("option", {
+        value: b.id, textContent: rotulo ? `${b.id} — ${rotulo}` : b.id
+      }));
+    }
+    // Si el que estaba simulado ya no existe, se vuelve al de salida en vez de
+    // dejar el desplegable señalando a la nada.
+    const sigue = antes && botones.some(b => b.id === antes);
+    this.selElegido.value = sigue ? antes : "";
+    this.selElegido.disabled = botones.length === 0;
+    if (!sigue && antes) this.lienzo.fijarSimulaElegido(null);
   }
 
   //---------------------------------------------------------------------------

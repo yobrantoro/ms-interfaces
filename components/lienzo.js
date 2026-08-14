@@ -60,6 +60,8 @@ export class Lienzo {
     this.zoom = 2;
     this.rejilla = true;
     this.imantar = true;
+    this.simulaElegido = null;       // que boton se da por elegido (null = el de salida)
+    this.verEscondidos = true;       // los que una condicion esconde, en fantasma
     this.pendientes = new Set();        // imagenes que se estan cargando
 
     // Dos capas: abajo el diseño a tamaño real y estirado picado (lo que se ve
@@ -110,6 +112,8 @@ export class Lienzo {
   fijarZoom(z) { this.zoom = Math.max(1, Math.min(6, z)); this.repintar(); }
   fijarRejilla(v) { this.rejilla = !!v; this.repintar(); }
   fijarImantar(v) { this.imantar = !!v; }
+  fijarSimulaElegido(id) { this.simulaElegido = id || null; this.repintar(); }
+  fijarVerEscondidos(v) { this.verEscondidos = !!v; this.repintar(); }
 
   get ancho() { return M.num(this.diseno?.lienzo?.ancho, M.LIENZO_ANCHO); }
   get alto() { return M.num(this.diseno?.lienzo?.alto, M.LIENZO_ALTO); }
@@ -182,9 +186,30 @@ export class Lienzo {
       .map((el, i) => ({ el, i }))
       .sort((a, b) => (M.num(a.el.capa, 0) - M.num(b.el.capa, 0)) || (a.i - b.i));
 
+    // UN ELEMENTO ESCONDIDO POR UNA CONDICION NO DESAPARECE: SE PINTA EN
+    // FANTASMA.
+    //
+    // Antes se saltaba y ya. Eso dejaba a alguien sin poder trabajar: pones a un
+    // texto "se ve cuando esta elegido el boton 3", se esfuma del lienzo, y ya no
+    // puedes ni verlo ni colocarlo. Quien lo probo entendio que la condicion no
+    // funcionaba, cuando en el juego iba bien.
+    //
+    // En fantasma se sigue viendo donde esta y se puede seguir moviendo, y a la
+    // vez queda claro que ahora mismo no se veria. Y el que este marcado se pinta
+    // SIEMPRE, aunque los fantasmas esten apagados: no se puede editar algo que
+    // no se ve.
+    this.fantasmas = [];
+    const marcados = new Set(this.marcados());
     for (const { el } of ordenados) {
       if (el.visible === false) continue;
-      if (!this.visiblePorCondicion(el)) continue;
+      if (!this.visiblePorCondicion(el)) {
+        const suyo = marcados.has(el._origen || el.id);
+        if (!this.verEscondidos && !suyo) continue;
+        this.fantasmas.push(el);
+        // El marcado se ve mas, porque es el que se esta editando.
+        this.pintarElemento(c, el, suyo ? 0.55 : 0.22);
+        continue;
+      }
       this.pintarElemento(c, el);
     }
 
@@ -206,7 +231,34 @@ export class Lienzo {
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, this.capa.width, this.capa.height);
     if (this.rejilla) this.pintarRejilla(c, W, H, z);
+    this.pintarFantasmas(c);
     this.pintarSeleccion(c);
+  }
+
+  //---------------------------------------------------------------------------
+  // LOS QUE AHORA MISMO NO SE VERIAN, con un contorno de rayas naranja.
+  //
+  // Con la transparencia sola no basta: un elemento a medio pintar puede ser una
+  // imagen que de verdad es tenue. El contorno dice "esto es que una condicion lo
+  // esta escondiendo", que es una cosa distinta.
+  //---------------------------------------------------------------------------
+  pintarFantasmas(c) {
+    for (const el of (this.fantasmas || [])) {
+      const r = this.rectanguloPantalla(el);
+      if (!r) continue;
+      c.save();
+      c.strokeStyle = "rgba(232,160,60,0.75)";
+      c.lineWidth = 1;
+      c.setLineDash([2, 3]);
+      const v = [[0, 0], [1, 0], [1, 1], [0, 1]]
+        .map(([u, w]) => this.girar(r, r.x + r.w * u, r.y + r.h * w));
+      c.beginPath();
+      c.moveTo(v[0].x + 0.5, v[0].y + 0.5);
+      for (let i = 1; i < 4; i++) c.lineTo(v[i].x + 0.5, v[i].y + 0.5);
+      c.closePath();
+      c.stroke();
+      c.restore();
+    }
   }
 
   pintarRejilla(c, W, H, z) {
@@ -244,28 +296,50 @@ export class Lienzo {
   }
 
   valorEjemplo(clave) {
-    // {seleccion} no sale del catalogo: depende de esta pantalla, asi que se
-    // simula con el boton que quedaria elegido al abrirse.
-    if (clave === "seleccion" || clave === "seleccion.id") {
-      const b = this._elegido;
-      if (!b) return M.HUECO;
-      return clave === "seleccion" ? String(b._copia == null ? 1 : b._copia) : String(b.id);
-    }
+    // {seleccion...} no sale del catalogo: depende de ESTA pantalla, asi que hay
+    // que simularlo. La cuenta esta en modelo.js, con las tres formas y probada
+    // contra la de Ruby.
+    //
+    // Aqui antes solo se contestaban dos ({seleccion} y {seleccion.id}) y la que
+    // faltaba era justo la que escribe el desplegable "cuando este elegido tal
+    // boton". Devolvia el hueco, la condicion no se cumplia y el elemento
+    // desaparecia del lienzo aunque en el juego se viera perfectamente.
+    const sel = M.valorSeleccion(clave, this._elegido);
+    if (sel !== null) return sel;
     return D.rellenarEjemplo("{" + clave + "}");
   }
 
-  // El boton que estara elegido al abrirse la pantalla: el mismo criterio que usa
-  // el motor (primero el orden_teclado que se haya puesto, y si no, de arriba
-  // abajo y de izquierda a derecha). Sirve para enseñar donde caera el cursor y
-  // para resolver {seleccion}.
+  // QUE BOTON SE DA POR ELEGIDO AL DIBUJAR.
+  //
+  // Normalmente el que quedaria elegido al abrirse la pantalla, con el mismo
+  // criterio que el motor (primero el orden_teclado que se haya puesto, y si no,
+  // de arriba abajo y de izquierda a derecha).
+  //
+  // Pero se puede fijar otro a mano, y hace falta: una pantalla suele tener un
+  // elemento por cada opcion ("se ve cuando esta elegido el boton 3"), y con un
+  // solo elegido posible los de los demas botones no se podrian ver NUNCA en el
+  // editor. Con esto se recorren los estados uno por uno, como con la linea de
+  // tiempo de las animaciones.
   //
   // Se mira la lista EXPANDIDA, no la de origen: en una lista repetida el que
   // queda elegido es la primera COPIA, y de ella sale el numero que compara
   // {seleccion}.
-  primerBoton() {
-    const botones = (this.expandidos || this.diseno?.elementos || [])
+  botonesDibujados() {
+    return (this.expandidos || this.diseno?.elementos || [])
       .filter(e => e.tipo === "boton" && e.visible !== false);
+  }
+
+  primerBoton() {
+    const botones = this.botonesDibujados();
     if (!botones.length) return null;
+    // Si se ha pedido simular uno concreto, manda ese. Vale tanto el nombre de la
+    // copia como el del elemento del diseño, igual que en el juego.
+    if (this.simulaElegido) {
+      const n = String(this.simulaElegido).toLowerCase();
+      const suyo = botones.find(b => String(b.id).toLowerCase() === n ||
+                                     String(b._origen || "").toLowerCase() === n);
+      if (suyo) return suyo;
+    }
     return botones.slice().sort((a, b) => {
       const oa = a.orden_teclado == null ? 1 : 0, ob = b.orden_teclado == null ? 1 : 0;
       if (oa !== ob) return oa - ob;
@@ -277,7 +351,12 @@ export class Lienzo {
 
   // Coloca el canvas en el estado que pide el elemento (posicion, giro, zoom,
   // transparencia) y llama al dibujo concreto.
-  pintarElemento(c, el) {
+  //
+  // "factorAlfa" multiplica la transparencia del propio elemento, y es lo que
+  // pinta los fantasmas. Va como parametro y no tocando globalAlpha por fuera
+  // porque aqui abajo se ASIGNA (no se multiplica), asi que cualquier cosa puesta
+  // antes se perderia sin dejar rastro.
+  pintarElemento(c, el, factorAlfa = 1) {
     let x = M.valorDe(el, "x", this.tiempo);
     let y = M.valorDe(el, "y", this.tiempo);
 
@@ -301,7 +380,7 @@ export class Lienzo {
     const m = this.medidaElemento(el);
 
     c.save();
-    c.globalAlpha = Math.max(0, Math.min(255, op)) / 255;
+    c.globalAlpha = (Math.max(0, Math.min(255, op)) / 255) * factorAlfa;
     // El eje va al CENTRO, se gira y se escala, y luego se vuelve a la esquina
     // para dibujar. Es lo mismo que hace el motor poniendo ox y oy en el centro.
     c.translate(x + m.w / 2, y + m.h / 2);

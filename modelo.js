@@ -214,6 +214,43 @@ export function resumenCondicion(cond) {
 export const HUECO = "---";
 
 //-----------------------------------------------------------------------------
+// CUANTO VALE {seleccion...}. Espejo del proc "seleccion" de [007] Datos.rb.
+//
+// POR QUE ESTA AQUI Y NO DENTRO DEL LIENZO
+//   Este dato no sale del catalogo: depende de la pantalla que se este mirando,
+//   asi que el editor tiene que simularlo. La primera version solo sabia
+//   contestar {seleccion} y {seleccion.id}, y se dejo fuera la tercera forma
+//   ({seleccion.NOMBRE}), que es JUSTO la que escribe el desplegable "cuando este
+//   elegido tal boton".
+//
+//   Lo que pasaba: el editor no sabia cuanto valia, devolvia el hueco, la
+//   condicion no se cumplia y el elemento DESAPARECIA DEL LIENZO. Quien lo probo
+//   dio por hecho que la condicion no funcionaba y pregunto si habia que
+//   desactivar algo. En el juego funcionaba perfectamente; el que mentia era el
+//   editor. Es el mismo fallo que el de las insignias de sexo.
+//
+//   Ahora la cuenta esta en un solo sitio, con nombre, y hay un test que la
+//   compara con la de Ruby.
+//
+// "elegido" es el boton que se da por elegido: {id, _origen, _copia}.
+// Devuelve null si la clave no habla de la seleccion.
+//-----------------------------------------------------------------------------
+export function valorSeleccion(clave, elegido) {
+  const m = /^seleccion(?:\.(.*))?$/.exec(String(clave || "").trim());
+  if (!m) return null;
+  const sub = (m[1] || "").trim();
+  if (!elegido) return HUECO;
+  if (!sub) return String(elegido._copia == null ? 1 : elegido._copia);
+  if (sub.toLowerCase() === "id") return String(elegido.id == null ? "" : elegido.id);
+  // Cualquier otra cosa es el nombre de un boton, y valen los DOS nombres: el de
+  // la copia ("opcion_3") y el del elemento del diseño ("opcion"). Igual que
+  // Datos.es_el_elegido? en Ruby.
+  const n = sub.toLowerCase();
+  const suyos = [elegido.id, elegido._origen].map(v => String(v == null ? "" : v).toLowerCase());
+  return suyos.includes(n) ? "1" : "0";
+}
+
+//-----------------------------------------------------------------------------
 // ¿SE CUMPLE ESTA CONDICION? Espejo de Datos.cumple? en [007] Datos.rb.
 //
 // Vive aqui para que la use tanto el lienzo del editor como la vista previa de

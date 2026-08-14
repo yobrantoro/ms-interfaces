@@ -488,6 +488,18 @@ export class Inspector {
       this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
         textContent: "Este elemento se repite. Si querias que cada copia mire SU boton, elige \"el de esta misma copia\"." }));
     }
+
+    // POR QUE EN EL LIENZO SE VE A MEDIAS.
+    //
+    // Aqui solo puede haber UN boton elegido a la vez, asi que en cuanto la
+    // condicion pregunta por otro, el elemento se dibuja en fantasma. Sin
+    // explicarlo eso se lee como "la condicion no funciona", que es exactamente
+    // lo que reporto la primera persona que la uso.
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "En el lienzo solo puede estar elegido un boton a la vez. Si esto se ve " +
+                   "a medias y con el borde de rayas naranja es que ahora mismo no le toca, " +
+                   "no que este mal: cambia \"Elegido\" en la barra de debajo del lienzo para " +
+                   "ver como queda en cada opcion. En el juego se ve entero." }));
   }
 
   //---------------------------------------------------------------------------
