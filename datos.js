@@ -202,6 +202,16 @@ export function rellenarEjemplo(texto) {
     // Un dato de otro Pokemon del equipo ({equipo.3.hp}) usa el ejemplo del 1.
     const generico = clave.replace(/^equipo\.\d+\./, "equipo.1.");
     if (PORCLAVE[generico] != null) return PORCLAVE[generico];
+    // UN INTERRUPTOR O UNA VARIABLE CUALQUIERA VALE 0, NO HUECO.
+    //
+    // El motor NUNCA da hueco en estos dos: su proc es
+    // "$game_switches[n] ? 1 : 0", o sea que uno sin tocar vale 0, y una
+    // variable sin asignar vale 0. El editor devolvia "---" para cualquiera que
+    // no estuviera en el catalogo (solo estan el 20 y la 5, de muestra), asi que
+    // en cuanto alguien ponia una condicion sobre SU interruptor el editor
+    // dejaba de coincidir con el juego. Es el mismo fallo de "el que mentia era
+    // el editor" que ya costo caro con {seleccion.NOMBRE}.
+    if (/^interruptor\.\d+$/.test(clave) || /^variable\.\d+$/.test(clave)) return "0";
     return "---";                      // igual que el hueco del motor
   });
 }

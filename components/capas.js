@@ -100,12 +100,16 @@ export class Capas {
     // habria que ir elemento por elemento para saber por que algo no sale.
     let marca = "";
     if (el.repetir) marca += "x" + el.repetir + " ";
+    if (el.hueco) marca += "▦ ";          // va en un hueco que se rellena
     if (el.mostrar_si) marca += "?";
+    if (el.activo_si) marca += "⊘";       // se puede apagar
     if (marca) {
       fila.appendChild(h("span", { className: "ui-capa-tipo", style: { color: "var(--accent)" },
         textContent: marca.trim(),
         title: (el.repetir ? "Se repite en el grupo " + el.repetir + ". " : "") +
-               (el.mostrar_si ? "Se ve " + M.resumenCondicion(el.mostrar_si) : "") }));
+               (el.hueco ? "Se coloca en los huecos de " + el.hueco + ". " : "") +
+               (el.mostrar_si ? "Se ve " + M.resumenCondicion(el.mostrar_si) + ". " : "") +
+               (el.activo_si ? "Se puede pulsar " + M.resumenCondicion(el.activo_si) : "") }));
     }
     fila.appendChild(h("span", { className: "ui-capa-tipo", textContent: M.NOMBRE_TIPO[el.tipo] || el.tipo }));
     fila.appendChild(candado);
@@ -180,12 +184,25 @@ export class Capas {
     // SI se referencian entre elementos. Renombrar sin actualizarlas dejaria
     // condiciones apuntando a un boton que ya no existe, y eso no falla con un
     // error: el elemento simplemente deja de aparecer, que es peor.
+    // Se baja hasta el fondo de los grupos ("todas" / "alguna"): una referencia
+    // enterrada dentro de un grupo se rompe igual de silenciosamente que una
+    // suelta, y ahi todavia es mas dificil de encontrar.
     let arrastradas = 0;
-    for (const otro of (this.diseno.elementos || [])) {
-      const cond = otro.mostrar_si;
-      if (!cond || String(cond.dato || "") !== `{seleccion.${antiguo}}`) continue;
+    const renombrarEn = (cond, hondura = 0) => {
+      if (!cond || typeof cond !== "object" || hondura > M.ANIDAMIENTO_MAXIMO) return;
+      if (Array.isArray(cond)) { for (const c of cond) renombrarEn(c, hondura + 1); return; }
+      const junta = M.JUNTAS.find(j => j in cond);
+      if (junta) {
+        if (Array.isArray(cond[junta])) for (const c of cond[junta]) renombrarEn(c, hondura + 1);
+        return;
+      }
+      if (String(cond.dato || "") !== `{seleccion.${antiguo}}`) return;
       cond.dato = `{seleccion.${limpio}}`;
       arrastradas++;
+    };
+    for (const otro of (this.diseno.elementos || [])) {
+      renombrarEn(otro.mostrar_si);
+      renombrarEn(otro.activo_si);
     }
     if (arrastradas > 0) {
       this.op.avisar?.(`Renombrado, y ${arrastradas} condicion(es) que lo miraban se han actualizado`);

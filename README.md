@@ -124,6 +124,37 @@ distinta.
 Un elemento escondido tampoco se puede pulsar, ni elegir con las flechas, ni
 responder a su tecla rapida.
 
+Con **"Añadir otra condicion"** se piden **varias a la vez**, y un desplegable
+elige si tienen que cumplirse **todas** (y) o **al menos una** (o).
+
+### Botones apagados
+
+Debajo esta **"Se puede pulsar si"**, con el mismo cajon de condiciones. Un boton
+apagado **se ve** pero no se puede pulsar, ni alcanzar con las flechas, ni
+disparar con su tecla; al intentarlo suena un zumbido.
+
+Es lo que hace falta para una tienda o un vestidor: que se vea lo que todavia no
+tienes. El lienzo lo enseña ya apagado, con los mismos numeros que usa el juego.
+Si le pones una imagen (o un color) de apagado, manda la tuya y no se le echa gris
+por encima.
+
+### Huecos que se rellenan
+
+Pones ocho prendas, seis estan bloqueadas, y con "mostrar solo si" el menu queda
+con dos botones y seis agujeros. Para eso estan los huecos.
+
+En un boton, **"Se coloca en"** → *"Que los N botones se coloquen en orden"*. Los
+que se vean ocupan los primeros sitios, sin dejar agujeros.
+
+**No se escribe ni una coordenada: los huecos son las posiciones que los botones ya
+tienen en el lienzo.** Colocalos donde quieras y ya esta. Con todos visibles no se
+mueve ninguno, asi que se puede seguir diseñando sin pelearse con esto; y apagando
+el ojo de un boton en la lista de capas se ve al momento como quedaria el menu sin
+el.
+
+Al que no quieras dentro (el de *Salir*, por ejemplo) le pones "(donde esta
+puesto)" en ese mismo desplegable.
+
 ### Teclas de acceso rapido
 
 Cada boton puede llevar una tecla que lo dispara **desde cualquier sitio de la
@@ -204,7 +235,8 @@ Con **raton** y con **teclado** a la vez, sin configurar nada:
 | Flechas | Mover 1 pixel (todo el grupo) |
 | Shift + flechas | Mover un paso de rejilla |
 | Alt mientras arrastras | Sin imantar a la rejilla |
-| Ctrl + rueda | Zoom |
+| Ctrl + rueda | Zoom **hacia donde apunta el raton** |
+| **Boton central, o espacio + arrastrar** | **Mover el lienzo** |
 | Ctrl+D | Duplicar |
 | Supr | Borrar |
 | Ctrl+S | Guardar |

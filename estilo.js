@@ -87,13 +87,31 @@ export const CSS = `
 .ui-ojo.apagado { opacity: .3; }
 
 /* ---- Lienzo ---- */
+/* EL CENTRADO VA CON margin:auto EN EL HIJO, NO CON justify-content, y no es un
+   capricho de estilo: es el arreglo de "si amplio la pantalla no me deja subir
+   la barra, por lo que media pantalla queda inutilizada".
+
+   Con overflow:auto mas align-items/justify-content:center, cuando el
+   contenido es mas grande que el hueco el navegador reparte lo que sobra a los
+   DOS lados, pero la barra de scroll solo llega al lado final: la mitad que
+   queda hacia arriba y hacia la izquierda no hay forma de alcanzarla. Es un
+   comportamiento conocido de flex con overflow, no un fallo del editor.
+
+   Con margin:auto en el hijo se centra igual cuando cabe, y cuando no cabe el
+   desbordamiento SI es alcanzable por los cuatro lados. */
 .ui-lienzo-zona {
-  flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center;
+  flex: 1; overflow: auto; display: flex;
   padding: 16px;
   background:
     repeating-conic-gradient(var(--bg-secondary) 0% 25%, var(--bg-primary) 0% 50%) 50% / 16px 16px;
 }
-.ui-lienzo-marco { position: relative; box-shadow: 0 0 0 1px var(--border), 0 6px 24px rgba(0,0,0,.35); }
+/* Mientras se arrastra el lienzo, el cursor lo dice. */
+.ui-lienzo-zona.ui-paneando,
+.ui-lienzo-zona.ui-paneando canvas.ui-lienzo { cursor: grabbing; }
+.ui-lienzo-marco {
+  position: relative; margin: auto;
+  box-shadow: 0 0 0 1px var(--border), 0 6px 24px rgba(0,0,0,.35);
+}
 /* El diseño se dibuja a 512x384 y lo estira el navegador PICADO, para que se vea
    la misma escalera de pixeles que en el juego y el editor no mienta. */
 canvas.ui-lienzo { display: block; image-rendering: pixelated; cursor: default; }

@@ -26,6 +26,12 @@ export const BOTON_COLOR = "#3C6E9BFF";
 export const BOTON_COLOR_ENCIMA = "#5A96C8FF";
 export const BOTON_COLOR_PULSADO = "#28506FFF";
 
+// Como se apaga un boton sin arte propio. Espejo de APAGADO_OPACIDAD y
+// APAGADO_GRIS en [000] Settings.rb: si el editor lo apagara con otros numeros,
+// enseñaria un gris distinto del que sale en el juego.
+export const APAGADO_OPACIDAD = 0.45;
+export const APAGADO_GRIS = 255;
+
 export const TIPOS = ["ventana", "imagen", "texto", "boton", "panel", "animado", "barra", "pokemon"];
 
 // El marco por defecto es el del SISTEMA, o sea el que el jugador tenga elegido en
@@ -172,6 +178,57 @@ export function comparadorDe(cond) {
   return null;
 }
 
+//=============================================================================
+// VARIAS CONDICIONES A LA VEZ. Espejo de Datos::JUNTAS en [007] Datos.rb.
+//
+//   { "todas":  [ {...}, {...} ] }    Y
+//   { "alguna": [ {...}, {...} ] }    O
+//   [ {...}, {...} ]                  = todas
+//
+// El editor trabaja SIEMPRE con una lista (aunque tenga un elemento) y guarda la
+// forma corta cuando solo hay una. Asi las pantallas de antes se siguen leyendo y
+// escribiendo igual que siempre, y el fichero no engorda por una funcion que casi
+// nadie usa.
+//=============================================================================
+export const JUNTAS = ["todas", "alguna"];
+export const ANIDAMIENTO_MAXIMO = 6;
+
+export function juntaDe(cond) {
+  if (Array.isArray(cond)) return "todas";
+  if (!cond || typeof cond !== "object") return null;
+  return JUNTAS.find(j => j in cond) || null;
+}
+
+// Devuelve {modo, lista} pase lo que pase, para que el inspector no tenga que
+// distinguir los tres casos.
+export function listaCondiciones(cond) {
+  if (!cond) return { modo: "todas", lista: [] };
+  if (Array.isArray(cond)) return { modo: "todas", lista: cond.slice() };
+  const j = juntaDe(cond);
+  if (j) return { modo: j, lista: Array.isArray(cond[j]) ? cond[j].slice() : [] };
+  return { modo: "todas", lista: [cond] };
+}
+
+// Y la vuelta. Una sola condicion se guarda pelada: dos formas distintas de decir
+// lo mismo en el fichero solo sirven para confundir a quien lo abra.
+export function empaquetarCondiciones(modo, lista) {
+  const limpia = (lista || []).filter(c => c && typeof c === "object");
+  if (!limpia.length) return null;
+  if (limpia.length === 1) return limpia[0];
+  return { [JUNTAS.includes(modo) ? modo : "todas"]: limpia };
+}
+
+// ¿Hay alguna condicion aqui dentro que mire la seleccion? Espejo de
+// Datos.mira_seleccion? en Ruby: decide si se reevalua en cada fotograma.
+export function miraSeleccion(cond, hondura = 0) {
+  if (!cond || hondura > ANIDAMIENTO_MAXIMO) return false;
+  if (Array.isArray(cond)) return cond.some(c => miraSeleccion(c, hondura + 1));
+  if (typeof cond !== "object") return false;
+  const j = JUNTAS.find(x => x in cond);
+  if (j) return Array.isArray(cond[j]) && cond[j].some(c => miraSeleccion(c, hondura + 1));
+  return String(cond.dato || "").includes("seleccion");
+}
+
 // Como se lee una condicion en cristiano, para la lista de capas y el inspector.
 //
 // Se traducen los tres casos comunes a lenguaje normal en vez de enseñar el dato
@@ -179,6 +236,17 @@ export function comparadorDe(cond) {
 // igual a 1" hay que descifrarlo.
 export function resumenCondicion(cond) {
   if (!cond) return "";
+
+  // Un grupo se lee juntando los de dentro con "y" o con "o". Enseñar "condicion
+  // compuesta" no dice nada; la frase entera si, aunque sea larga.
+  const junta = juntaDe(cond);
+  if (junta) {
+    const { lista } = listaCondiciones(cond);
+    if (!lista.length) return "un grupo de condiciones vacio";
+    const pegamento = (junta === "alguna") ? " o " : " y ";
+    return lista.map(x => resumenCondicion(x)).join(pegamento);
+  }
+
   const c = comparadorDe(cond);
   if (!c) return "condicion sin terminar";
   const dato = String(cond.dato || "?").replace(/^{|}$/g, "");
@@ -260,8 +328,24 @@ export function valorSeleccion(clave, elegido) {
 //
 // "valorDeDato" recibe la clave ya sin llaves y devuelve el valor en texto.
 //-----------------------------------------------------------------------------
-export function cumpleCondicion(cond, valorDeDato) {
+export function cumpleCondicion(cond, valorDeDato, hondura = 0) {
   if (!cond || typeof cond !== "object") return true;
+  if (hondura > ANIDAMIENTO_MAXIMO) return true;
+
+  // Grupos. Una lista vacia se ve, igual que en Ruby: vale mas enseñar de mas que
+  // desaparecer sin explicacion.
+  if (Array.isArray(cond)) {
+    return !cond.length || cond.every(x => cumpleCondicion(x, valorDeDato, hondura + 1));
+  }
+  const junta = JUNTAS.find(j => j in cond);
+  if (junta) {
+    const lista = cond[junta];
+    if (!Array.isArray(lista) || !lista.length) return true;
+    return (junta === "alguna")
+      ? lista.some(x => cumpleCondicion(x, valorDeDato, hondura + 1))
+      : lista.every(x => cumpleCondicion(x, valorDeDato, hondura + 1));
+  }
+
   const clave = String(cond.dato == null ? "" : cond.dato).trim().replace(/^\{|\}$/g, "");
   if (!clave) return true;
   const izq = valorDeDato ? valorDeDato(clave) : HUECO;
@@ -549,6 +633,47 @@ export function expandirRepeticiones(diseno, valorDeDato) {
   return salida;
 }
 
+//=============================================================================
+// HUECOS QUE SE RELLENAN. Espejo del modulo Huecos de [002] Lector.rb.
+//
+// Los huecos son las posiciones que los elementos del grupo YA tienen puestas.
+// Los que se vean se corren a los primeros, en orden de lectura. Con todos
+// visibles no se mueve nada, que es la propiedad que hace que esto no moleste
+// mientras se diseña.
+//
+// "seVe" decide quien cuenta. Es un parametro y no una cuenta de aqui dentro
+// porque el juego mira los interruptores de la partida y el editor los valores de
+// ejemplo, pero el REPARTO tiene que ser identico en los dos o el editor mentiria.
+//=============================================================================
+export function colocarHuecos(diseno, elementos, seVe) {
+  const declarados = diseno && diseno.huecos;
+  if (!declarados || typeof declarados !== "object") return elementos;
+
+  for (const nombre of Object.keys(declarados)) {
+    const regla = declarados[nombre] || {};
+    const miembros = elementos.filter(el => el.hueco === nombre);
+    if (!miembros.length) continue;
+
+    const ordenados = miembros.slice().sort((a, b) => (regla.orden === "fila")
+      ? (num(a.x, 0) - num(b.x, 0)) || (num(a.y, 0) - num(b.y, 0))
+      : (num(a.y, 0) - num(b.y, 0)) || (num(a.x, 0) - num(b.x, 0)));
+
+    const puestos = ordenados.map(el => [num(el.x, 0), num(el.y, 0)]);
+    const visibles = ordenados.filter(el => el.visible !== false && (!seVe || seVe(el)));
+
+    const retraso = num(regla.retraso, 0);
+    visibles.forEach((el, i) => {
+      if (!puestos[i]) return;
+      el.x = puestos[i][0];
+      el.y = puestos[i][1];
+      if (retraso > 0 && el.entrada) {
+        el.entrada.retraso = num(el.entrada.retraso, 0) + retraso * i;
+      }
+    });
+  }
+  return elementos;
+}
+
 function sustituirN(o, i) {
   if (typeof o === "string") return o.split("{n}").join(String(i));
   if (Array.isArray(o)) return o.map(v => sustituirN(v, i));
@@ -720,19 +845,20 @@ export function idLibre(diseno, base) {
 // editarla, y los diffs de git enseñan lo que cambio de verdad y no un baile de
 // lineas.
 //=============================================================================
-const ORDEN = ["id", "tipo", "repetir", "capa", "x", "y", "ancho", "alto",
-  "imagen", "imagen_encima", "imagen_pulsado",
+const ORDEN = ["id", "tipo", "repetir", "hueco", "capa", "x", "y", "ancho", "alto",
+  "imagen", "imagen_encima", "imagen_pulsado", "imagen_apagado",
   "fotogramas", "ancho_fotograma", "alto_fotograma", "velocidad", "bucle",
   "marco",
   "imagen_fondo", "tramos_imagen",
   "valor", "maximo", "por_tramos", "color_fondo", "color_medio", "color_bajo", "hacia",
   "cual", "modo",
   "texto", "tamano", "color", "sombra", "color_texto",
-  "color_encima", "color_pulsado", "borde", "borde_encima", "borde_pulsado", "borde_grosor",
+  "color_encima", "color_pulsado", "color_apagado",
+  "borde", "borde_encima", "borde_pulsado", "borde_apagado", "borde_grosor",
   "alineacion", "alineacion_vertical", "desplazar_y", "contorno",
   "opacidad", "zoom", "angulo", "visible", "sonido",
   "escala_encima", "escala_pulsado",
-  "mostrar_si",
+  "mostrar_si", "activo_si",
   "orden_teclado", "tecla", "sigue_seleccion", "cursor_x", "cursor_y",
   "accion", "entrada", "animaciones"];
 
@@ -756,6 +882,9 @@ export function escribirJSON(diseno) {
   if (diseno.teclado === false) salida.teclado = false;
   if (diseno.repeticiones && Object.keys(diseno.repeticiones).length) {
     salida.repeticiones = diseno.repeticiones;
+  }
+  if (diseno.huecos && Object.keys(diseno.huecos).length) {
+    salida.huecos = diseno.huecos;
   }
   if (diseno.pantalla_completa) {
     salida.pantalla_completa = true;
@@ -867,29 +996,78 @@ export function revisar(diseno, otros = []) {
         avisos.push(`"${donde}" necesita un numero mayor que 0`);
       }
     }
-    if (el.mostrar_si) {
-      if (typeof el.mostrar_si !== "object") avisos.push(`La condicion de "${donde}" tiene que ser un objeto`);
-      else {
-        if (!el.mostrar_si.dato) avisos.push(`"${donde}" tiene una condicion que no dice que dato mira`);
-        if (!comparadorDe(el.mostrar_si)) avisos.push(`"${donde}" tiene una condicion sin comparacion`);
-        // Una condicion que mira un boton que ya no existe NO da error en el
-        // juego: el elemento deja de aparecer y punto. Hay que cazarlo aqui o se
-        // convierte en media hora buscando por que algo no sale.
-        const m = String(el.mostrar_si.dato || "").match(/^\{seleccion\.([^}]+)\}$/);
-        if (m && m[1] !== "id" && !m[1].includes("{n}")) {
-          const existe = (diseno.elementos || []).some(e => e.id === m[1] && e.tipo === "boton");
-          if (!existe) {
-            avisos.push(`"${donde}" se ve solo cuando este elegido "${m[1]}", y no hay ningun boton con ese nombre`);
-          }
-        }
-      }
+    // Las dos condiciones se revisan igual y HASTA EL FONDO: una condicion rota
+    // dentro de un grupo "todas" no da error en el juego, solo hace que el
+    // elemento salga cuando no debe. Sin revisar dentro, eso no lo caza nadie.
+    revisarCondicion(diseno, el.mostrar_si, donde, "Mostrar solo si", avisos);
+    revisarCondicion(diseno, el.activo_si, donde, "Se puede pulsar si", avisos);
+    if (el.activo_si && el.tipo !== "boton") {
+      avisos.push(`"${donde}" no es un boton: "se puede pulsar si" no hace nada ahi`);
+    }
+
+    // Un hueco declarado a medias deja al elemento donde estaba y en silencio.
+    if (el.hueco && !((diseno.huecos || {})[el.hueco])) {
+      avisos.push(`"${donde}" va en el grupo de huecos "${el.hueco}", que ya no existe`);
+    }
+    if (el.hueco && miraSeleccion(el.mostrar_si)) {
+      avisos.push(`"${donde}" esta en un hueco y su condicion mira la seleccion: los huecos se reparten al abrir la pantalla y no se moverian`);
     }
     for (const p of el.animaciones || []) {
       if (!PROPIEDADES.includes(p.propiedad)) avisos.push(`"${donde}" quiere animar algo que no se puede (${p.propiedad})`);
       if (!p.claves || p.claves.length < 2) avisos.push(`La animacion de ${NOMBRE_PROPIEDAD[p.propiedad] || p.propiedad} en "${donde}" necesita al menos dos claves`);
     }
   });
+
+  // Un grupo de huecos con un solo elemento no compacta nada: no hay a donde
+  // subir. Casi siempre significa que se olvido marcar a los demas.
+  for (const nombre of Object.keys(diseno.huecos || {})) {
+    const cuantos = (diseno.elementos || []).filter(e => e.hueco === nombre).length;
+    if (cuantos < 2) {
+      avisos.push(`El grupo de huecos "${nombre}" tiene ${cuantos} elemento(s): hacen falta al menos dos`);
+    }
+  }
   return avisos;
+}
+
+// Una condicion, o un grupo de condiciones, revisada hasta el fondo.
+function revisarCondicion(diseno, cond, donde, comoSeLlama, avisos, hondura = 0) {
+  if (!cond) return;
+  if (hondura > ANIDAMIENTO_MAXIMO) {
+    avisos.push(`"${donde}": "${comoSeLlama}" tiene grupos metidos unos dentro de otros de mas`);
+    return;
+  }
+  if (typeof cond !== "object") {
+    avisos.push(`"${donde}": "${comoSeLlama}" tiene que ser una condicion, no ${typeof cond}`);
+    return;
+  }
+  if (Array.isArray(cond)) {
+    if (!cond.length) avisos.push(`"${donde}": "${comoSeLlama}" no tiene ninguna condicion dentro`);
+    for (const c of cond) revisarCondicion(diseno, c, donde, comoSeLlama, avisos, hondura + 1);
+    return;
+  }
+  const junta = JUNTAS.find(j => j in cond);
+  if (junta) {
+    const lista = cond[junta];
+    if (!Array.isArray(lista) || !lista.length) {
+      avisos.push(`"${donde}": el grupo "${junta}" de "${comoSeLlama}" no tiene ninguna condicion dentro`);
+      return;
+    }
+    for (const c of lista) revisarCondicion(diseno, c, donde, comoSeLlama, avisos, hondura + 1);
+    return;
+  }
+
+  if (!cond.dato) avisos.push(`"${donde}" tiene una condicion que no dice que dato mira`);
+  if (!comparadorDe(cond)) avisos.push(`"${donde}" tiene una condicion sin comparacion`);
+  // Una condicion que mira un boton que ya no existe NO da error en el juego: el
+  // elemento deja de aparecer y punto. Hay que cazarlo aqui o se convierte en
+  // media hora buscando por que algo no sale.
+  const m = String(cond.dato || "").match(/^\{seleccion\.([^}]+)\}$/);
+  if (m && m[1] !== "id" && !m[1].includes("{n}")) {
+    const existe = (diseno.elementos || []).some(e => e.id === m[1] && e.tipo === "boton");
+    if (!existe) {
+      avisos.push(`"${donde}" se ve solo cuando este elegido "${m[1]}", y no hay ningun boton con ese nombre`);
+    }
+  }
 }
 
 //=============================================================================

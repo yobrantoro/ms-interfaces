@@ -24,6 +24,14 @@ import * as M from "../modelo.js";
 import * as G from "../graficos.js";
 import * as D from "../datos.js";
 
+// ¿El usuario esta escribiendo en un campo? Entonces las teclas son del campo y
+// no atajos del lienzo. Sin esto, escribir un espacio en el nombre de un elemento
+// activaria el modo de arrastrar el lienzo.
+export function escribiendo(destino) {
+  if (!destino || !destino.tagName) return false;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(destino.tagName) || destino.isContentEditable;
+}
+
 const TIRADOR = 7;                 // lado del tirador de redimension, en pixeles de pantalla
 const MINIMO = 2;                  // no se puede hacer un elemento mas pequeño que esto
 const GIRO_DIST = 22;              // cuanto se separa la bolita de girar del borde de arriba
@@ -109,7 +117,41 @@ export class Lienzo {
     return this.marcados().map(id => lista.find(e => e.id === id)).filter(Boolean);
   }
   fijarTiempo(t) { this.tiempo = t; this.repintar(); }
-  fijarZoom(z) { this.zoom = Math.max(1, Math.min(6, z)); this.repintar(); }
+  fijarZoom(z) { this.fijarZoomHacia(z, null, null); }
+
+  // ZOOM SIN PERDER DE VISTA LO QUE ESTAS MIRANDO.
+  //
+  // Ampliar a secas deja la vista donde estaba, o sea que el sitio que te
+  // interesaba se va fuera de pantalla y hay que ir a buscarlo con las barras.
+  // Eso es media queja de "no siempre puedes enfocar a donde quieras".
+  //
+  // Se le pasa el punto de la PANTALLA que tiene que quedarse quieto (donde esta
+  // el raton, o el centro de la vista si no hay raton). Se mira que punto DEL
+  // DISEÑO cae justo ahi, se cambia el zoom, y se corrige el scroll para que ese
+  // mismo punto del diseño vuelva a caer donde estaba.
+  fijarZoomHacia(z, clienteX, clienteY) {
+    const nuevo = Math.max(1, Math.min(6, z));
+    if (nuevo === this.zoom) return;
+    const zona = this.el;
+
+    const cajaZona = zona.getBoundingClientRect();
+    const px = (clienteX == null) ? cajaZona.left + (cajaZona.width / 2) : clienteX;
+    const py = (clienteY == null) ? cajaZona.top + (cajaZona.height / 2) : clienteY;
+
+    const antes = this.canvas.getBoundingClientRect();
+    const disenoX = (px - antes.left) / this.zoom;
+    const disenoY = (py - antes.top) / this.zoom;
+
+    this.zoom = nuevo;
+    this.repintar();
+
+    // Ya con el tamaño nuevo: donde ha ido a parar ese punto del diseño, y
+    // cuanto hay que desplazar para devolverlo a donde estaba en la pantalla.
+    const despues = this.canvas.getBoundingClientRect();
+    zona.scrollLeft += (despues.left + (disenoX * nuevo)) - px;
+    zona.scrollTop += (despues.top + (disenoY * nuevo)) - py;
+  }
+
   fijarRejilla(v) { this.rejilla = !!v; this.repintar(); }
   fijarImantar(v) { this.imantar = !!v; }
   fijarSimulaElegido(id) { this.simulaElegido = id || null; this.repintar(); }
@@ -177,6 +219,12 @@ export class Lienzo {
     // Se dibuja la lista EXPANDIDA: un grupo repetido se ve con sus seis copias,
     // igual que en el juego. Lo que se edita sigue siendo el elemento de origen.
     this.expandidos = M.expandirRepeticiones(this.diseno, (clave) => D.rellenarEjemplo(clave));
+    // Y despues los huecos, en el MISMO orden que el motor (Repeticiones y luego
+    // Huecos, ver [005] Escena.rb). Se pregunta si cada uno se veria AL ABRIR, sin
+    // ningun boton elegido todavia, que es el momento exacto en que el juego los
+    // reparte: mirando la seleccion de ahora, el editor colocaria los botones en
+    // sitios en los que el juego no los pone nunca.
+    M.colocarHuecos(this.diseno, this.expandidos, (el) => this.seVeAlAbrir(el));
     // Quien quedaria elegido al abrirse la pantalla. Se calcula UNA vez por
     // repintado y SIN mirar condiciones: si mirara condiciones, evaluar una
     // condicion sobre {seleccion} volveria a preguntar quien esta elegido y se
@@ -295,6 +343,32 @@ export class Lienzo {
     return M.cumpleCondicion(el.mostrar_si, (clave) => this.valorEjemplo(clave));
   }
 
+  // Lo mismo pero en el instante de abrir la pantalla, cuando todavia no hay nada
+  // elegido. Es lo que decide quien ocupa hueco, porque es cuando el motor los
+  // reparte. Cuenta tambien el ojo de la lista de capas: apagarlo escribe
+  // "visible": false en el diseño de verdad, asi que es la manera de ver aqui como
+  // queda el menu con una prenda bloqueada.
+  seVeAlAbrir(el) {
+    if (el.visible === false) return false;
+    if (!el.mostrar_si) return true;
+    return M.cumpleCondicion(el.mostrar_si, (clave) => {
+      const sel = M.valorSeleccion(clave, null);
+      return (sel !== null) ? sel : D.rellenarEjemplo("{" + clave + "}");
+    });
+  }
+
+  // Un boton apagado se dibuja como en el juego: sin color y medio transparente.
+  // Sin esto el editor enseñaria un boton normal y corriente y la unica manera de
+  // ver que esta bloqueado seria abrir el juego.
+  //
+  // Se mira con los valores de ejemplo, igual que "mostrar_si": no es una promesa
+  // de que en la partida vaya a estar apagado, es enseñar como queda cuando lo
+  // este.
+  botonApagado(el) {
+    if (el.tipo !== "boton" || !el.activo_si) return false;
+    return !M.cumpleCondicion(el.activo_si, (clave) => this.valorEjemplo(clave));
+  }
+
   valorEjemplo(clave) {
     // {seleccion...} no sale del catalogo: depende de ESTA pantalla, asi que hay
     // que simularlo. La cuenta esta en modelo.js, con las tres formas y probada
@@ -379,8 +453,17 @@ export class Lienzo {
     // ninguna. Todo lo de dentro se dibuja de 0,0 a m.w,m.h.
     const m = this.medidaElemento(el);
 
+    // UN BOTON APAGADO SE VE APAGADO, con los mismos numeros que el motor
+    // (Interfaces::APAGADO_OPACIDAD y APAGADO_GRIS). Salvo que tenga arte propio
+    // de apagado: entonces manda el dibujo y no se le echa gris encima, igual que
+    // en Boton#apagado_a_mano?.
+    const apagado = this.botonApagado(el);
+    const conArte = apagado && (el.imagen ? !!el.imagen_apagado : !!el.color_apagado);
+
     c.save();
-    c.globalAlpha = (Math.max(0, Math.min(255, op)) / 255) * factorAlfa;
+    c.globalAlpha = (Math.max(0, Math.min(255, op)) / 255) * factorAlfa *
+                    ((apagado && !conArte) ? M.APAGADO_OPACIDAD : 1);
+    if (apagado && !conArte) c.filter = "grayscale(1)";
     // El eje va al CENTRO, se gira y se escala, y luego se vuelve a la esquina
     // para dibujar. Es lo mismo que hace el motor poniendo ox y oy en el centro.
     c.translate(x + m.w / 2, y + m.h / 2);
@@ -425,7 +508,7 @@ export class Lienzo {
 
   // El ancho del texto, y de paso la caja de linea.
   medirTexto(c, txt, tam) {
-    c.font = `${tam}px "${G.FUENTE}", sans-serif`;
+    c.font = G.fuenteSegunTamano(tam);
     const m = c.measureText(txt);
     const asc = m.fontBoundingBoxAscent != null ? m.fontBoundingBoxAscent : tam * 0.8;
     const desc = m.fontBoundingBoxDescent != null ? m.fontBoundingBoxDescent : tam * 0.2;
@@ -444,7 +527,7 @@ export class Lienzo {
   metricasTinta(c, tam) {
     this._tinta = this._tinta || {};
     if (this._tinta[tam]) return this._tinta[tam];
-    c.font = `${tam}px "${G.FUENTE}", sans-serif`;
+    c.font = G.fuenteSegunTamano(tam);
     const m = c.measureText(M.MUESTRA_METRICA);
     const subida = m.actualBoundingBoxAscent != null ? m.actualBoundingBoxAscent : tam * 0.72;
     const bajada = m.actualBoundingBoxDescent != null ? m.actualBoundingBoxDescent : tam * 0.22;
@@ -458,7 +541,7 @@ export class Lienzo {
   escribir(c, txt, x, y, ancho, alto, tam, op) {
     if (!txt) return;
     const t = this.metricasTinta(c, tam);
-    c.font = `${tam}px "${G.FUENTE}", sans-serif`;
+    c.font = G.fuenteSegunTamano(tam);
     const al = op.alineacion || "izquierda";
     c.textAlign = al === "centro" ? "center" : (al === "derecha" ? "right" : "left");
     const tx = x + (al === "centro" ? ancho / 2 : (al === "derecha" ? ancho : 0));
@@ -501,12 +584,19 @@ export class Lienzo {
   }
 
   pintarBoton(c, el, m) {
+    // Con arte de apagado manda ese, como en Boton#pintar_estado del motor.
+    const apagado = this.botonApagado(el);
     const conImagen = !!el.imagen;
-    if (conImagen) { this.pintarImagen(c, el, el.imagen, m); return; }
+    if (conImagen) {
+      this.pintarImagen(c, el, (apagado && el.imagen_apagado) || el.imagen, m);
+      return;
+    }
 
     const w = m.w, hh = m.h;
-    this.recuadro(c, 0, 0, w, hh, colorCss(el.color, M.BOTON_COLOR),
-      el.borde ? colorCss(el.borde, "#FFFFFFFF") : null,
+    const relleno = (apagado && el.color_apagado) ? el.color_apagado : el.color;
+    const cerco = (apagado && el.borde_apagado) ? el.borde_apagado : el.borde;
+    this.recuadro(c, 0, 0, w, hh, colorCss(relleno, M.BOTON_COLOR),
+      el.borde ? colorCss(cerco, "#FFFFFFFF") : null,
       el.borde_grosor == null ? 1 : M.num(el.borde_grosor, 1));
 
     const txt = D.rellenarEjemplo(el.texto);
@@ -924,13 +1014,68 @@ export class Lienzo {
     window.addEventListener("blur", this._alPerderFoco);
     this.canvas.addEventListener("mousemove", (e) => this.alMoverEncima(e));
     this.canvas.addEventListener("mouseleave", () => this.op.alMoverRaton?.(null));
-    // Rueda con Ctrl para el zoom, que es lo que espera cualquiera.
-    this.canvas.addEventListener("wheel", (e) => {
+    // Rueda con Ctrl para el zoom, que es lo que espera cualquiera. Va en LA
+    // ZONA y no en el canvas: ampliando mucho, el canvas se sale de la vista y
+    // el raton puede estar sobre el fondo a cuadros, donde antes la rueda no
+    // hacia nada.
+    this._alRodar = (e) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      this.fijarZoom(this.zoom + (e.deltaY < 0 ? 1 : -1));
+      this.fijarZoomHacia(this.zoom + (e.deltaY < 0 ? 1 : -1), e.clientX, e.clientY);
       this.op.alCambiarZoom?.(this.zoom);
-    }, { passive: false });
+    };
+    this.el.addEventListener("wheel", this._alRodar, { passive: false });
+
+    // ARRASTRAR PARA MOVER EL LIENZO.
+    //
+    // Con el zoom alto, llegar a una esquina con las barras es un suplicio. Se
+    // puede arrastrar con el BOTON CENTRAL o manteniendo ESPACIO, que es lo que
+    // hace cualquier programa de dibujo; el boton izquierdo se deja libre porque
+    // ahi ya se selecciona y se mueven elementos.
+    this._paneo = null;
+    this._espacio = false;
+
+    this._alPulsarZona = (e) => {
+      const conEspacio = this._espacio && e.button === 0;
+      if (e.button !== 1 && !conEspacio) return;
+      e.preventDefault();
+      this._paneo = {
+        x: e.clientX, y: e.clientY,
+        sx: this.el.scrollLeft, sy: this.el.scrollTop
+      };
+      this.el.classList.add("ui-paneando");
+    };
+    this._alMoverPaneo = (e) => {
+      if (!this._paneo) return;
+      this.el.scrollLeft = this._paneo.sx - (e.clientX - this._paneo.x);
+      this.el.scrollTop = this._paneo.sy - (e.clientY - this._paneo.y);
+    };
+    this._alSoltarPaneo = () => {
+      if (!this._paneo) return;
+      this._paneo = null;
+      this.el.classList.remove("ui-paneando");
+    };
+
+    // El espacio se vigila en la ventana, pero NO cuando se esta escribiendo en
+    // una caja de texto del inspector: ahi el espacio es un espacio.
+    this._alBajarTecla = (e) => {
+      if (e.code !== "Space" || escribiendo(e.target)) return;
+      this._espacio = true;
+    };
+    this._alSubirTecla = (e) => {
+      if (e.code === "Space") this._espacio = false;
+    };
+
+    this.el.addEventListener("mousedown", this._alPulsarZona);
+    window.addEventListener("mousemove", this._alMoverPaneo);
+    window.addEventListener("mouseup", this._alSoltarPaneo);
+    window.addEventListener("keydown", this._alBajarTecla);
+    window.addEventListener("keyup", this._alSubirTecla);
+    // Si se pierde el foco a mitad, el espacio se quedaria "pulsado" para
+    // siempre y el clic izquierdo dejaria de seleccionar. Mismo motivo que el
+    // cancelarArrastre de arriba.
+    this._alPerderFocoPaneo = () => { this._espacio = false; this._alSoltarPaneo(); };
+    window.addEventListener("blur", this._alPerderFocoPaneo);
   }
 
   posicionEnCanvas(e) {
@@ -1191,8 +1336,18 @@ export class Lienzo {
     window.removeEventListener("mousemove", this._alMoverVentana);
     window.removeEventListener("mouseup", this._alSoltarVentana);
     window.removeEventListener("blur", this._alPerderFoco);
+    // Los del arrastre del lienzo, por el mismo motivo que los de arriba: si se
+    // quedan, cada movimiento del raton en toda la ventana despierta a un lienzo
+    // que ya no existe.
+    window.removeEventListener("mousemove", this._alMoverPaneo);
+    window.removeEventListener("mouseup", this._alSoltarPaneo);
+    window.removeEventListener("keydown", this._alBajarTecla);
+    window.removeEventListener("keyup", this._alSubirTecla);
+    window.removeEventListener("blur", this._alPerderFocoPaneo);
     this._latiendo = false;
     this.arrastre = null;
+    this._paneo = null;
+    this._espacio = false;
   }
 
   alSoltar() {

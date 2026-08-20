@@ -7,11 +7,16 @@
 //   esta disponible y permite leer bytes. Es lo mismo que hace el mod pbs-editor
 //   para sus miniaturas, o sea que es camino trillado y no un truco.
 //
-// LA FUENTE ES IMPORTANTE
-//   Se carga Fonts/power green.ttf del propio proyecto, que es la fuente que usa
-//   Essentials (MessageConfig::FONT_NAME = "Power Green"). Sin eso el editor
-//   dibujaria el texto con otra fuente y las cajas no cuadrarian con el juego:
-//   un editor visual que miente sobre el tamaño del texto no sirve de nada.
+// LA FUENTE ES IMPORTANTE, Y SON DOS
+//   Essentials no tiene UNA fuente escalable: tiene DOS DIBUJADAS A MANO, cada
+//   una para su tamaño (Power Green para 27 px y Power Green Small para 21). El
+//   juego elige una u otra segun el cuerpo que se le pida, asi que el editor
+//   tiene que elegir CON LA MISMA REGLA. Ver fuenteSegunTamano aqui abajo, que
+//   es el espejo de Interfaces.fuente en [003] Elementos.rb.
+//
+//   Un editor visual que miente sobre la letra no sirve de nada, y no es una
+//   suposicion: en este proyecto ya se pago dos veces (el visor de la pantalla
+//   de carga enseñaba una fuente y el juego pintaba otra).
 //=============================================================================
 
 const EXTENSIONES = ["png", "gif"];      // las mismas que resuelve pbResolveBitmap
@@ -20,8 +25,21 @@ let _raiz = "";
 let _invoke = null;
 const _cache = new Map();                // ruta sin extension -> {url, ancho, alto} o null
 let _fuenteLista = false;
+let _pequenaLista = false;
 
-export const FUENTE = "PowerGreenEditor";
+export const FUENTE = "PowerGreenEditor";           // la normal, para 27 px
+export const FUENTE_PEQUENA = "PowerGreenSmallEditor";  // la dibujada para 21
+
+// El mismo corte que Interfaces::UMBRAL_FUENTE_PEQUENA en [000] Settings.rb.
+export const UMBRAL_FUENTE_PEQUENA = 21;
+
+// Que fuente toca para este cuerpo. ESPEJO EXACTO de Interfaces.fuente: si las
+// dos reglas se separan, el editor vuelve a enseñar una letra y el juego otra.
+export function fuenteSegunTamano(tam) {
+  const t = (tam && tam > 0) ? tam : 14;
+  const familia = (t <= UMBRAL_FUENTE_PEQUENA && _pequenaLista) ? FUENTE_PEQUENA : FUENTE;
+  return `${t}px "${familia}", sans-serif`;
+}
 
 export function configurar(ctx) {
   _invoke = window.__TAURI__?.core?.invoke || null;
@@ -230,14 +248,23 @@ export async function medirGrafico(rutaRelativa) {
 //-----------------------------------------------------------------------------
 export async function cargarFuente() {
   if (_fuenteLista || !_raiz) return _fuenteLista;
-  const bytes = await leerBytes(`${_raiz}/Fonts/power green.ttf`);
-  if (!bytes) return false;
-  try {
-    const cara = new FontFace(FUENTE, bytes.buffer);
-    await cara.load();
-    document.fonts.add(cara);
-    _fuenteLista = true;
-  } catch { _fuenteLista = false; }
+
+  const cargar = async (fichero, nombre) => {
+    const bytes = await leerBytes(`${_raiz}/Fonts/${fichero}`);
+    if (!bytes) return false;
+    try {
+      const cara = new FontFace(nombre, bytes.buffer);
+      await cara.load();
+      document.fonts.add(cara);
+      return true;
+    } catch { return false; }
+  };
+
+  _fuenteLista = await cargar("power green.ttf", FUENTE);
+  // La pequeña es OPCIONAL: si el proyecto no la tiene, fuenteSegunTamano cae a
+  // la normal y el editor sigue funcionando (peor, pero igual que el juego, que
+  // hace lo mismo por medio de pbGetSmallFontName).
+  _pequenaLista = await cargar("power green small.ttf", FUENTE_PEQUENA);
   return _fuenteLista;
 }
 

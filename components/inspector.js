@@ -67,6 +67,7 @@ export class Inspector {
     this.pintarPosicion(el);
     this.pintarPorTipo(el);
     this.pintarRepeticion(el);
+    this.pintarHueco(el);
     this.pintarCondicion(el);
     this.pintarAspecto(el);
     this.pintarEntrada(el);
@@ -75,11 +76,15 @@ export class Inspector {
   pintarSinSeleccion() {
     this.pintarPantalla();
     this.pintarRepeticiones();
+    this.pintarHuecos();
     this.pintarAperturas();
     this.cuerpo.appendChild(separador());
     this.cuerpo.appendChild(h("div", { className: "ui-ayuda" },
       h("p", { textContent: "Pulsa un elemento en el lienzo o en la lista de capas para ver sus propiedades." }),
-      h("p", { textContent: "Atajos: flechas para mover 1 pixel, Shift+flechas para saltar de rejilla, Alt mientras arrastras para no imantar, Supr para borrar, Ctrl+D para duplicar." })
+      // Las tres de abajo se hacen desde el elemento, no desde aqui, y por eso se
+      // dice DONDE estan: son justo las que no se encontraban.
+      h("p", { textContent: "Pincha un boton y abajo del todo tienes: \"Mostrar solo si\" (y ahi, \"Añadir otra condicion\" para pedir varias a la vez), \"Se puede pulsar si\" para que salga apagado y no se pueda usar, y \"Se coloca en\" para que los desbloqueados se pongan en orden sin dejar huecos." }),
+      h("p", { textContent: "Atajos: flechas para mover 1 pixel, Shift+flechas para saltar de rejilla, Alt mientras arrastras para no imantar, Supr para borrar, Ctrl+D para duplicar. Ctrl+rueda amplia hacia donde apuntas, y con el boton central o con espacio se arrastra el lienzo." })
     ));
   }
 
@@ -203,6 +208,70 @@ export class Inspector {
       this.op.antesDeCambiar?.();
       this.diseno.repeticiones = this.diseno.repeticiones || {};
       this.diseno.repeticiones[limpio] = { cuantos: 6, salto_y: 40 };
+      this.op.alCambiar?.();
+      this.refrescar();
+    }));
+  }
+
+  //---------------------------------------------------------------------------
+  // HUECOS QUE SE RELLENAN.
+  //
+  // AQUI NO SE ESCRIBE NI UNA COORDENADA, y esa es toda la gracia: los huecos son
+  // las posiciones que los elementos del grupo ya tienen puestas en el lienzo. Una
+  // lista de coordenadas aparte se desincronizaria con lo que se ve el primer dia.
+  //---------------------------------------------------------------------------
+  pintarHuecos() {
+    if (!this.diseno) return;
+    this.cuerpo.appendChild(titulillo("Huecos que se rellenan"));
+    const huecos = this.diseno.huecos || {};
+    const nombres = Object.keys(huecos);
+
+    if (!nombres.length) {
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Para un menu donde algunos botones estan bloqueados: declara un grupo, marca los botones con el, y los que se vean se colocaran en los primeros sitios sin dejar agujeros. Coloca los botones donde quieras: sus posiciones SON los huecos." }));
+    }
+
+    for (const nombre of nombres) {
+      const r = huecos[nombre];
+      const cuantos = (this.diseno.elementos || []).filter(e => e.hueco === nombre).length;
+      this.cuerpo.appendChild(fila(`${nombre} (${cuantos})`,
+        boton("Quitar", () => {
+          this.op.antesDeCambiar?.();
+          delete this.diseno.huecos[nombre];
+          for (const el of this.diseno.elementos || []) if (el.hueco === nombre) delete el.hueco;
+          if (!Object.keys(this.diseno.huecos).length) delete this.diseno.huecos;
+          this.op.alCambiar?.();
+          this.refrescar();
+        }, "peligro")));
+      this.cuerpo.appendChild(fila("Se llenan",
+        desplegable(r.orden === "fila" ? "fila" : "columna", [
+          { valor: "columna", texto: "de arriba abajo" },
+          { valor: "fila", texto: "de izquierda a derecha" }
+        ], (v) => {
+          this.op.antesDeCambiar?.();
+          if (v === "fila") r.orden = "fila"; else delete r.orden;
+          this.op.alCambiar?.();
+          this.refrescar();
+        })));
+      this.cuerpo.appendChild(fila("Cascada",
+        campoNumero(M.num(r.retraso, 0), (v) => {
+          this.op.antesDeCambiar?.("hueco:" + nombre);
+          r.retraso = (v || 0) || undefined;
+          this.op.alCambiar?.();
+        }, { paso: 0.02, min: 0 }),
+        h("span", { className: "ui-capa-tipo", textContent: "s entre uno y otro" })
+      ));
+      this.cuerpo.appendChild(separador());
+    }
+
+    this.cuerpo.appendChild(boton("Añadir un grupo de huecos...", async () => {
+      const n = await this.op.pedirTexto?.("Nombre del grupo (menu, prendas...)", "menu");
+      if (!n) return;
+      const limpio = String(n).toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+      if (!limpio) return;
+      this.op.antesDeCambiar?.();
+      this.diseno.huecos = this.diseno.huecos || {};
+      this.diseno.huecos[limpio] = {};
       this.op.alCambiar?.();
       this.refrescar();
     }));
@@ -352,6 +421,64 @@ export class Inspector {
   }
 
   //---------------------------------------------------------------------------
+  // A que grupo de huecos pertenece, y en que puesto de la fila va hoy.
+  //
+  // ESTA SECCION SE ENSEÑA AUNQUE NO HAYA NINGUN GRUPO TODAVIA, y no es un
+  // capricho: antes los grupos solo se podian crear con NADA seleccionado, o sea
+  // que quien pinchaba un boton buscando "botones dinamicos" no encontraba nada y
+  // daba por hecho que no existia. Paso de verdad. Se crea desde aqui, que es
+  // donde a uno se le ocurre buscarlo.
+  //---------------------------------------------------------------------------
+  pintarHueco(el) {
+    const declarados = Object.keys((this.diseno && this.diseno.huecos) || {});
+    if (!declarados.length && !el.hueco) {
+      if (el.tipo !== "boton") return;      // en un texto suelto seria ruido
+      const botones = this.botonesDelDiseno();
+      this.cuerpo.appendChild(titulillo("Se coloca en"));
+      this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+        textContent: "Ahora mismo este boton se queda siempre donde lo pongas. Si quieres una lista donde los que esten bloqueados no dejen un agujero (un vestidor, un menu que se va desbloqueando), haz un grupo de huecos: los que se vean ocuparan los primeros sitios, en orden." }));
+      this.cuerpo.appendChild(boton(
+        botones.length > 1
+          ? `Que los ${botones.length} botones se coloquen en orden`
+          : "Crear un grupo de huecos",
+        () => {
+          this.op.antesDeCambiar?.();
+          this.diseno.huecos = this.diseno.huecos || {};
+          this.diseno.huecos["menu"] = {};
+          // Se meten TODOS los botones y no solo este: un grupo de uno no
+          // compacta nada (no hay a donde subir) y es el aviso que da el propio
+          // revisor. Sacar al que sobre es un desplegable.
+          for (const b of botones) b.hueco = "menu";
+          this.op.alCambiar?.();
+          this.refrescar();
+        }, "primario"));
+      if (botones.length > 1) {
+        this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+          textContent: "Entran todos, y al que no quieras (el de Salir, por ejemplo) le pones \"(donde esta puesto)\" aqui mismo. Sus posiciones de ahora SON los huecos: con todos visibles no se mueve nada." }));
+      }
+      return;
+    }
+    this.cuerpo.appendChild(titulillo("Se coloca en"));
+    this.cuerpo.appendChild(fila("Huecos de",
+      desplegable(el.hueco || "",
+        [{ valor: "", texto: "(donde esta puesto)" }, ...declarados.map(d => ({ valor: d, texto: d }))],
+        (v) => { this.fijar(el, "hueco", v || null); this.refrescar(); })));
+    if (!el.hueco) return;
+
+    // Se dice cuantos son y en que puesto va este: sin eso, "va en el grupo menu"
+    // no le dice a nadie que va a pasar cuando falte alguno.
+    const grupo = (this.diseno.elementos || []).filter(e => e.hueco === el.hueco);
+    const regla = (this.diseno.huecos || {})[el.hueco] || {};
+    const ordenados = grupo.slice().sort((a, b) => (regla.orden === "fila")
+      ? (M.num(a.x, 0) - M.num(b.x, 0)) || (M.num(a.y, 0) - M.num(b.y, 0))
+      : (M.num(a.y, 0) - M.num(b.y, 0)) || (M.num(a.x, 0) - M.num(b.x, 0)));
+    const puesto = ordenados.findIndex(e => e.id === el.id) + 1;
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: `Hoy va el ${puesto} de ${grupo.length}. Si alguno de los de antes no se ve, este sube a su sitio. ` +
+                   `Los huecos son las posiciones que ya tienen los del grupo: muevelos en el lienzo y listo.` }));
+  }
+
+  //---------------------------------------------------------------------------
   // MOSTRAR SOLO SI...
   //
   // Es lo que convierte una lista repetida en algo util: pones seis fichas de
@@ -378,40 +505,120 @@ export class Inspector {
   //   igual que la pestaña de condiciones de RPG Maker: es donde la gente ya
   //   sabe leerlo.
   //---------------------------------------------------------------------------
+  //---------------------------------------------------------------------------
+  // VARIAS CONDICIONES A LA VEZ.
+  //
+  // Lo pidio quien monta las pantallas: "hay veces que se necesita que se cumpla
+  // mas de una condicion a la vez, y el programa lo limita a una". Antes habia que
+  // inventarse una variable puente en el editor de eventos para juntar dos cosas.
+  //
+  // El editor trabaja SIEMPRE con una lista, aunque tenga un solo elemento, y al
+  // guardar la de uno se escribe pelada (ver M.empaquetarCondiciones). Asi las
+  // pantallas de antes se leen y se reescriben exactamente igual que siempre.
+  //
+  // El mismo cajon vale para "mostrar_si" (si se ve) y para "activo_si" (si se
+  // puede pulsar), que es lo que hace que los botones apagados no hayan costado
+  // una interfaz nueva.
+  //---------------------------------------------------------------------------
   pintarCondicion(el) {
-    this.cuerpo.appendChild(titulillo("Mostrar solo si"));
-    const tiene = !!el.mostrar_si;
+    this.pintarCondiciones(el, "mostrar_si", "Mostrar solo si", "se ve siempre",
+      "Un elemento escondido tampoco se puede pulsar ni elegir con las flechas.");
+    if (el.tipo === "boton") {
+      this.pintarCondiciones(el, "activo_si", "Se puede pulsar si", "siempre se puede pulsar",
+        "Apagado SE VE igual, pero no se puede pulsar ni alcanzar con las flechas, " +
+        "y al intentarlo suena un zumbido. Es lo que hace falta para una lista donde " +
+        "quieres que se vea lo que aun no tienes.");
+      if (el.activo_si) this.pintarAspectoApagado(el);
+    }
+  }
+
+  pintarCondiciones(el, clave, titulo, siNoHay, ayuda) {
+    this.cuerpo.appendChild(titulillo(titulo));
+    const tiene = !!el[clave];
     this.cuerpo.appendChild(fila("Con condicion",
       casilla(tiene, (v) => {
         this.op.antesDeCambiar?.();
-        if (v) el.mostrar_si = { dato: "{interruptor.1}", es: 1 };
-        else delete el.mostrar_si;
+        if (v) el[clave] = { dato: "{interruptor.1}", es: 1 };
+        else delete el[clave];
         this.op.alCambiar?.();
         this.refrescar();
-      }, tiene ? "" : "se ve siempre")));
+      }, tiene ? "" : siNoHay)));
     if (!tiene) return;
 
-    const cond = el.mostrar_si;
-    const tocar = () => { this.op.antesDeCambiar?.("cond:" + el.id); this.op.alCambiar?.(); };
-    const clase = M.claseCondicion(cond);
+    const { modo, lista } = M.listaCondiciones(el[clave]);
+    // Cualquier cambio de ESTRUCTURA (añadir, quitar, cambiar Y por O) reescribe
+    // la clave entera. Los cambios DENTRO de una condicion la tocan en su sitio,
+    // que es lo que permite reutilizar los tres editores de siempre sin tocarlos.
+    const rehacer = (nuevoModo, nuevaLista) => {
+      this.op.antesDeCambiar?.();
+      const empaquetada = M.empaquetarCondiciones(nuevoModo, nuevaLista);
+      if (empaquetada) el[clave] = empaquetada; else delete el[clave];
+      this.op.alCambiar?.();
+      this.refrescar();
+    };
 
-    this.cuerpo.appendChild(fila("De que va",
-      desplegable(clase, M.CLASES_CONDICION, (v) => {
-        if (v === clase) return;
-        this.op.antesDeCambiar?.();
-        // Se reescribe la condicion entera: mezclar restos de la anterior es lo
-        // que produce condiciones a medias que no se cumplen nunca.
-        el.mostrar_si = M.condicionNueva(v, this.primerBotonDe(el));
-        this.op.alCambiar?.();
-        this.refrescar();
-      })));
+    if (lista.length > 1) {
+      this.cuerpo.appendChild(fila("Se cumplen",
+        desplegable(modo, [
+          { valor: "todas", texto: "TODAS (y)" },
+          { valor: "alguna", texto: "AL MENOS UNA (o)" }
+        ], (v) => rehacer(v, lista))));
+    }
 
-    if (clase === "boton") this.condicionBoton(el, cond, tocar);
-    else if (clase === "interruptor" || clase === "variable") this.condicionInterruptor(el, cond, tocar, clase);
-    else this.condicionDato(el, cond, tocar);
+    const tocar = () => { this.op.antesDeCambiar?.("cond:" + el.id + ":" + clave); this.op.alCambiar?.(); };
+    lista.forEach((cond, i) => {
+      if (lista.length > 1) {
+        this.cuerpo.appendChild(fila(`Condicion ${i + 1}`,
+          boton("Quitar", () => rehacer(modo, lista.filter((_, j) => j !== i)), "peligro")));
+      }
+      const clase = M.claseCondicion(cond);
+      this.cuerpo.appendChild(fila("De que va",
+        desplegable(clase, M.CLASES_CONDICION, (v) => {
+          if (v === clase) return;
+          // Se reescribe la condicion entera: mezclar restos de la anterior es lo
+          // que produce condiciones a medias que no se cumplen nunca.
+          const nueva = lista.slice();
+          nueva[i] = M.condicionNueva(v, this.primerBotonDe(el));
+          rehacer(modo, nueva);
+        })));
+
+      if (clase === "boton") this.condicionBoton(el, cond, tocar);
+      else if (clase === "interruptor" || clase === "variable") this.condicionInterruptor(el, cond, tocar, clase);
+      else this.condicionDato(el, cond, tocar);
+      if (i < lista.length - 1) this.cuerpo.appendChild(separador());
+    });
+
+    this.cuerpo.appendChild(boton("Añadir otra condicion",
+      () => rehacer(modo, [...lista, { dato: "{interruptor.1}", es: 1 }])));
 
     this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
-      textContent: "En el juego: " + M.resumenCondicion(cond) + ". Un elemento escondido tampoco se puede pulsar ni elegir con las flechas. Si la condicion esta mal escrita el elemento SE VE, para que no desaparezca en silencio." }));
+      textContent: "En el juego: " + M.resumenCondicion(el[clave]) + ". " + ayuda +
+                   " Si la condicion esta mal escrita el elemento SE VE, para que no desaparezca en silencio." }));
+  }
+
+  //---------------------------------------------------------------------------
+  // Como se ve un boton apagado. Sin poner nada se apaga con gris y transparencia
+  // (Interfaces::APAGADO_* en Settings.rb); quien tenga arte lo pisa aqui, y
+  // entonces manda el dibujo y no se le echa gris encima.
+  //---------------------------------------------------------------------------
+  pintarAspectoApagado(el) {
+    this.cuerpo.appendChild(titulillo("Y apagado se ve..."));
+    if (el.imagen) {
+      this.cuerpo.appendChild(fila("Imagen",
+        campoTexto(el.imagen_apagado || "", (v) => this.fijar(el, "imagen_apagado", v),
+                   "(gris y translucido)")));
+    } else {
+      this.cuerpo.appendChild(fila("Color",
+        campoColor(el.color_apagado || el.color || M.BOTON_COLOR,
+          (v) => this.fijar(el, "color_apagado", v))));
+      if (el.color_apagado) {
+        this.cuerpo.appendChild(boton("Quitar el color de apagado",
+          () => { this.fijar(el, "color_apagado", null); this.refrescar(); }));
+      }
+    }
+    this.cuerpo.appendChild(h("div", { className: "ui-ayuda",
+      textContent: "Dejalo vacio y el boton se apaga solo: se le quita el color y se pone medio transparente. " +
+                   "Si pones algo aqui manda lo tuyo y no se le echa nada encima." }));
   }
 
   // Los botones de esta pantalla, para poder elegirlos por nombre.
